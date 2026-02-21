@@ -317,9 +317,9 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
             {!readonly && <GridHelper />}
 
             <Bvh firstHitOnly>
-                <WallSystem />
+                <WallSystem readonly={readonly} />
                 {!readonly && <WallPreview />}
-                <SceneItems />
+                <SceneItems readonly={readonly} />
             </Bvh>
 
             <AdaptiveDpr pixelated />

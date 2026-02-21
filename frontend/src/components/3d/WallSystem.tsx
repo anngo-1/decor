@@ -15,6 +15,7 @@ function WallSegment({
     polygonId,
     segmentIndex,
     customColor,
+    readonly = false,
 }: {
     p1: Vec2
     p2: Vec2
@@ -23,6 +24,7 @@ function WallSegment({
     polygonId?: string
     segmentIndex?: number
     customColor?: string
+    readonly?: boolean
 }) {
     const dx = p2.x - p1.x
     const dz = p2.z - p1.z
@@ -65,7 +67,7 @@ function WallSegment({
             receiveShadow
             castShadow
             onClick={(e) => {
-                if (ghost || activeTool !== 'select') return
+                if (readonly || ghost || activeTool !== 'select') return
                 if (polygonId && segmentIndex !== undefined) {
                     e.stopPropagation()
                     selectWall(`${polygonId}-${segmentIndex}`)
@@ -87,7 +89,7 @@ function WallSegment({
     )
 }
 
-export function WallSystem() {
+export function WallSystem({ readonly = false }: { readonly?: boolean }) {
     const roomPolygons = useStore((s) => s.roomPolygons)
     const wallHeight = useStore((s) => s.wallHeight)
 
@@ -113,6 +115,7 @@ export function WallSystem() {
                                     polygonId={poly.id}
                                     segmentIndex={i}
                                     customColor={customColor}
+                                    readonly={readonly}
                                 />
                             )
                         })}

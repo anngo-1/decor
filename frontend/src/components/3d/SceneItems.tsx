@@ -213,14 +213,14 @@ function DragPreview() {
     )
 }
 
-export function SceneItems() {
+export function SceneItems({ readonly = false }: { readonly?: boolean }) {
     const placedItems = useStore((s) => s.placedItems)
     const selectedItemId = useStore((s) => s.selectedItemId)
     const selectItem = useStore((s) => s.selectItem)
     const activeTool = useStore((s) => s.activeTool)
 
     const handleSelect = (id: string) => {
-        if (activeTool === 'select') {
+        if (activeTool === 'select' && !readonly) {
             selectItem(id)
         }
     }
@@ -233,12 +233,13 @@ export function SceneItems() {
                         item={item}
                         isSelected={item.id === selectedItemId}
                         onClick={() => handleSelect(item.id)}
+                        interactive={!readonly}
                     />
                 </Suspense>
             ))}
 
-            <SelectedMoveInteraction />
-            <DragPreview />
+            {!readonly && <SelectedMoveInteraction />}
+            {!readonly && <DragPreview />}
         </group>
     )
 }
