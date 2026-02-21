@@ -1,0 +1,537 @@
+import { create } from 'zustand'
+import { subscribeWithSelector } from 'zustand/middleware'
+import type {
+    Vec2,
+    RoomPolygon,
+    PlacedItem,
+    GenerationTask,
+    EditorTool,
+    LibraryItem,
+    Space,
+} from '@/types'
+
+// Built-in sample library with public GLB URLs (demo)
+// Built-in sample library with public GLB URLs (demo)
+export const SAMPLE_LIBRARY: LibraryItem[] = []
+
+const API_BASE = '/api/backend'
+
+interface StoreState {
+    userId: string | null
+    userSpaces: Space[]
+    communitySpaces: Space[]
+    isSaving: boolean
+    isLoading: boolean
+    editingSpaceId: string | null
+    // History
+    pastHistory: string[]
+    futureHistory: string[]
+    commitHistory: () => void
+    undo: () => void
+    redo: () => void
+
+    // Room geometry
+    roomPolygons: RoomPolygon[]
+    activePolygonId: string | null
+    currentWallPoints: Vec2[]
+    isDrawingWall: boolean
+
+    // Selection
+    selectedWallId: string | null // Format: `${polygonId}-${segmentIndex}`
+
+    // Placed items
+    placedItems: PlacedItem[]
+    selectedItemId: string | null
+
+    // Editor mode
+    activeTool: EditorTool
+    wallHeight: number
+
+    // AI generation
+    generationTasks: GenerationTask[]
+    generatingCount: number
+
+    // UI state
+    showGenerateDialog: boolean
+    showSidebar: boolean
+    draggedLibraryItem: LibraryItem | null
+    shadowsEnabled: boolean
+    isPointerLocked: boolean
+
+    // Measure tool
+    measurePoints: [Vec2, Vec2] | null
+    measureDistance: number | null
+
+
+    // Wall hover (ephemeral — grid-snapped cursor position while drawing)
+    hoverPoint: Vec2 | null
+
+    // Drag preview hover
+    dragHoverPoint: [number, number, number] | null
+
+    // Actions: Wall
+    startWallDrawing: () => void
+    addWallPoint: (point: Vec2) => void
+    closeWallPolygon: () => void
+    finishWallDrawing: () => void
+    cancelWallDrawing: () => void
+    clearRoom: () => void
+    setHoverPoint: (pt: Vec2 | null) => void
+    selectWall: (id: string | null) => void
+    updateWallColor: (polygonId: string, segmentIndex: number, color: string) => void
+    deleteWallSegment: (polygonId: string, segmentIndex: number) => void
+
+    // Actions: Items
+    placeItem: (item: Omit<PlacedItem, 'id'>) => string
+    updateItemPosition: (id: string, position: [number, number, number]) => void
+    updateItemRotation: (id: string, rotation: [number, number, number]) => void
+    updateItemScale: (id: string, scale: number) => void
+    updateItemDimensions: (id: string, dimensions: [number, number, number]) => void
+    removeItem: (id: string) => void
+    selectItem: (id: string | null) => void
+    setDraggedLibraryItem: (item: LibraryItem | null) => void
+    setDragHoverPoint: (pt: [number, number, number] | null) => void
+
+    // Actions: Tools
+    setActiveTool: (tool: EditorTool) => void
+    setWallHeight: (h: number) => void
+
+    // Actions: Generation
+    addGenerationTask: (task: GenerationTask) => void
+    updateGenerationTask: (taskId: string, update: Partial<GenerationTask>) => void
+
+    // Actions: UI
+    setShowGenerateDialog: (v: boolean) => void
+    toggleSidebar: () => void
+    toggleShadows: () => void
+    togglePointerLock: () => void
+
+    // Backend Actions
+    setUserId: (id: string) => void
+    fetchSpaces: (type: 'user' | 'community') => Promise<void>
+    saveSpace: (title: string, description?: string, isPublished?: boolean) => Promise<string | null>
+    loadSpace: (spaceId: string) => Promise<void>
+    preloadSpace: (spaceId: string) => Promise<void>
+    addWallSegment: (points: Vec2[]) => void
+    setIsLoading: (loading: boolean) => void
+
+    // Screenshot/Preview
+    getScreenshot: (() => string | null) | null
+    setGetScreenshot: (fn: (() => string | null) | null) => void
+}
+
+function createId() {
+    return Math.random().toString(36).slice(2, 10)
+}
+
+export const useStore = create<StoreState>()(
+    subscribeWithSelector((set, get) => ({
+        roomPolygons: [],
+        activePolygonId: null,
+        currentWallPoints: [],
+        isDrawingWall: false,
+        placedItems: [],
+        selectedItemId: null,
+        selectedWallId: null,
+        activeTool: 'select',
+        wallHeight: 2.4,
+        generationTasks: [
+            {
+                taskId: "gen-2",
+                status: "completed",
+                modelUrl: "https://v3b.fal.media/files/b/0a8f5f8c/RX3vLHPz-eggCsFTlNdot_model.glb",
+                thumbnailUrl: "https://v3b.fal.media/files/b/0a8f5f8c/q9ECkpmRZlqBSsa06V7id_preview.png",
+                name: "Couch"
+            },
+            {
+                taskId: "gen-1",
+                status: "completed",
+                modelUrl: "https://v3b.fal.media/files/b/0a8f5dab/pjq8rgWI_zbGrP3Y3GwQw_model.glb",
+                thumbnailUrl: "https://v3b.fal.media/files/b/0a8f5dab/3hvuQBOPm7e44vV7pyMfF_preview.png",
+                name: "Stool"
+            }
+        ],
+        generatingCount: 0,
+        showGenerateDialog: false,
+        showSidebar: true,
+        draggedLibraryItem: null,
+        dragHoverPoint: null,
+        hoverPoint: null,
+        shadowsEnabled: false,
+        isPointerLocked: false,
+        measurePoints: null,
+        measureDistance: null,
+
+        userId: null,
+        userSpaces: [],
+        communitySpaces: [],
+        isSaving: false,
+        isLoading: false,
+        editingSpaceId: null,
+
+        getScreenshot: null,
+        setGetScreenshot: (fn) => set({ getScreenshot: fn }),
+
+        pastHistory: [],
+        futureHistory: [],
+
+        commitHistory: () => {
+            const { roomPolygons, placedItems, wallHeight, pastHistory } = get()
+            const stateSnapshot = JSON.stringify({ roomPolygons, placedItems, wallHeight })
+            set({
+                pastHistory: [...pastHistory, stateSnapshot],
+                futureHistory: [] // clear redo stack on new action
+            })
+        },
+
+        undo: () => {
+            const { pastHistory, futureHistory, roomPolygons, placedItems, wallHeight } = get()
+            if (pastHistory.length === 0) return
+            const previousStateJSON = pastHistory[pastHistory.length - 1]
+            const currentStateSnapshot = JSON.stringify({ roomPolygons, placedItems, wallHeight })
+            const previousState = JSON.parse(previousStateJSON)
+
+            set({
+                ...previousState,
+                pastHistory: pastHistory.slice(0, -1),
+                futureHistory: [currentStateSnapshot, ...futureHistory],
+                selectedItemId: null,
+                selectedWallId: null,
+            })
+        },
+
+        redo: () => {
+            const { pastHistory, futureHistory, roomPolygons, placedItems, wallHeight } = get()
+            if (futureHistory.length === 0) return
+            const nextStateJSON = futureHistory[0]
+            const currentStateSnapshot = JSON.stringify({ roomPolygons, placedItems, wallHeight })
+            const nextState = JSON.parse(nextStateJSON)
+
+            set({
+                ...nextState,
+                pastHistory: [...pastHistory, currentStateSnapshot],
+                futureHistory: futureHistory.slice(1),
+                selectedItemId: null,
+                selectedWallId: null,
+            })
+        },
+
+        startWallDrawing: () => {
+            get().commitHistory()
+            set({ isDrawingWall: true, currentWallPoints: [], activeTool: 'wall', selectedItemId: null, selectedWallId: null })
+        },
+
+        addWallPoint: (point) =>
+            set((s) => ({ currentWallPoints: [...s.currentWallPoints, point] })),
+
+        closeWallPolygon: () => {
+            const { currentWallPoints, roomPolygons } = get()
+            if (currentWallPoints.length < 3) return
+            get().commitHistory()
+            const id = createId()
+            set({
+                roomPolygons: [...roomPolygons, { id, points: currentWallPoints, closed: true }],
+                activePolygonId: id,
+                currentWallPoints: [],
+                isDrawingWall: false,
+                activeTool: 'select',
+                hoverPoint: null,
+            })
+        },
+
+        finishWallDrawing: () => {
+            const { currentWallPoints, roomPolygons } = get()
+            if (currentWallPoints.length < 2) return
+            get().commitHistory()
+            const id = createId()
+            set({
+                roomPolygons: [...roomPolygons, { id, points: currentWallPoints, closed: false }],
+                activePolygonId: id,
+                currentWallPoints: [],
+                isDrawingWall: false,
+                activeTool: 'select',
+                hoverPoint: null,
+            })
+        },
+
+        cancelWallDrawing: () => {
+            set({ isDrawingWall: false, currentWallPoints: [], activeTool: 'select', hoverPoint: null })
+        },
+
+        setHoverPoint: (pt) => set({ hoverPoint: pt }),
+
+        clearRoom: () => {
+            set({
+                roomPolygons: [],
+                currentWallPoints: [],
+                isDrawingWall: false,
+                activePolygonId: null,
+                selectedWallId: null,
+                editingSpaceId: null,
+                placedItems: [],
+                pastHistory: [],
+                futureHistory: [],
+                selectedItemId: null,
+                isLoading: false,
+            })
+        },
+
+        setIsLoading: (loading) => set({ isLoading: loading }),
+
+        selectWall: (id) => set({ selectedWallId: id, selectedItemId: null }),
+
+        updateWallColor: (polygonId, segmentIndex, color) => {
+            get().commitHistory()
+            set((s) => ({
+                roomPolygons: s.roomPolygons.map((poly) => {
+                    if (poly.id !== polygonId) return poly
+                    return {
+                        ...poly,
+                        segmentProps: {
+                            ...(poly.segmentProps || {}),
+                            [segmentIndex]: { ...((poly.segmentProps || {})[segmentIndex] || {}), color }
+                        }
+                    }
+                })
+            }))
+        },
+
+        deleteWallSegment: (polygonId, segmentIndex) => {
+            get().commitHistory()
+            set((s) => {
+                const poly = s.roomPolygons.find((p) => p.id === polygonId)
+                if (!poly) return s
+
+                // A single line segment being deleted splits the polygon
+                // or removes a segment from an open one
+                const newPolygons = s.roomPolygons.filter((p) => p.id !== polygonId)
+                const pts = poly.points
+
+                if (poly.closed) {
+                    // Closed polygon becomes open. 
+                    // To do this right, we need to arrange points so the deleted segment is the "gap"
+                    // If segmentIndex is i, the segment is pts[i] to pts[(i+1)%len].
+                    // The new open polygon starts at pts[(i+1)%len] and goes around to pts[i].
+                    const newPoints = []
+                    const len = pts.length
+                    for (let j = 0; j < len; j++) {
+                        newPoints.push(pts[(segmentIndex + 1 + j) % len])
+                    }
+                    newPolygons.push({ id: createId(), points: newPoints, closed: false, segmentProps: {} })
+                } else {
+                    // Open polygon split into two (or one if end segment is deleted)
+                    const leftPoints = pts.slice(0, segmentIndex + 1)
+                    const rightPoints = pts.slice(segmentIndex + 1)
+
+                    if (leftPoints.length >= 2) {
+                        newPolygons.push({ id: createId(), points: leftPoints, closed: false, segmentProps: {} })
+                    }
+                    if (rightPoints.length >= 2) {
+                        newPolygons.push({ id: createId(), points: rightPoints, closed: false, segmentProps: {} })
+                    }
+                }
+
+                return { roomPolygons: newPolygons, selectedWallId: null }
+            })
+        },
+
+        placeItem: (item) => {
+            get().commitHistory()
+            const id = createId()
+            set((s) => ({ placedItems: [...s.placedItems, { ...item, id }], selectedWallId: null }))
+            return id
+        },
+
+        updateItemPosition: (id, position) => {
+            get().commitHistory()
+            set((s) => ({
+                placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, position } : it)),
+            }))
+        },
+
+        updateItemRotation: (id, rotation) => {
+            get().commitHistory()
+            set((s) => ({
+                placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, rotation } : it)),
+            }))
+        },
+
+        updateItemScale: (id, scale) => {
+            get().commitHistory()
+            set((s) => ({
+                placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, scale } : it)),
+            }))
+        },
+
+        updateItemDimensions: (id, dimensions) => {
+            set((s) => ({
+                placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, dimensions } : it)),
+            }))
+        },
+
+        removeItem: (id) => {
+            get().commitHistory()
+            set((s) => ({
+                placedItems: s.placedItems.filter((it) => it.id !== id),
+                selectedItemId: s.selectedItemId === id ? null : s.selectedItemId,
+            }))
+        },
+
+        selectItem: (id) => set({ selectedItemId: id, selectedWallId: null }),
+
+        setDraggedLibraryItem: (item) => set({ draggedLibraryItem: item }),
+
+        setDragHoverPoint: (pt) => set({ dragHoverPoint: pt }),
+
+        setActiveTool: (tool) => {
+            const { isDrawingWall, cancelWallDrawing } = get()
+            if (isDrawingWall && tool !== 'wall') cancelWallDrawing()
+            set({ activeTool: tool })
+            if (tool === 'wall') get().startWallDrawing()
+        },
+
+        setWallHeight: (wallHeight) => {
+            get().commitHistory()
+            set({ wallHeight })
+        },
+
+
+        addGenerationTask: (task) =>
+            set((s) => ({
+                generationTasks: [task, ...s.generationTasks],
+                generatingCount: s.generatingCount + 1,
+            })),
+
+        updateGenerationTask: (taskId, update) =>
+            set((s) => {
+                const tasks = s.generationTasks.map((t) => (t.taskId === taskId ? { ...t, ...update } : t))
+                const finished = update.status === 'completed' || update.status === 'failed'
+                return {
+                    generationTasks: tasks,
+                    generatingCount: finished ? Math.max(0, s.generatingCount - 1) : s.generatingCount,
+                }
+            }),
+
+        setShowGenerateDialog: (v) => set({ showGenerateDialog: v }),
+        toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
+        toggleShadows: () => set((s) => ({ shadowsEnabled: !s.shadowsEnabled })),
+        togglePointerLock: () => set((s) => ({ isPointerLocked: !s.isPointerLocked })),
+
+        setUserId: (id) => set({ userId: id }),
+
+        fetchSpaces: async (type) => {
+            const { userId } = get()
+            const url = type === 'community'
+                ? `${API_BASE}/spaces/community`
+                : `${API_BASE}/spaces/user/${userId}`
+
+            try {
+                const res = await fetch(url)
+                const data = await res.json()
+                if (type === 'community') set({ communitySpaces: data })
+                else set({ userSpaces: data })
+            } catch (err) {
+                console.error('Failed to fetch spaces:', err)
+            }
+        },
+
+        saveSpace: async (title, description = '', isPublished = false) => {
+            const { userId, roomPolygons, placedItems, wallHeight, editingSpaceId } = get()
+            if (!userId) return null
+
+            set({ isSaving: true })
+            try {
+                const method = editingSpaceId ? 'PUT' : 'POST'
+                const url = editingSpaceId
+                    ? `${API_BASE}/spaces/${editingSpaceId}?user_id=${userId}`
+                    : `${API_BASE}/spaces?user_id=${userId}`
+
+                const res = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title,
+                        description,
+                        is_published: isPublished,
+                        layout_data: { roomPolygons, placedItems, wallHeight },
+                        preview_url: get().getScreenshot ? get().getScreenshot!() : null
+                    })
+                })
+                const data = await res.json()
+                set({ editingSpaceId: data.id })
+                get().fetchSpaces('user')
+                return data.id
+            } catch (err) {
+                console.error('Failed to save space:', err)
+                return null
+            } finally {
+                set({ isSaving: false })
+            }
+        },
+
+        loadSpace: async (spaceId) => {
+            set({ isLoading: true })
+            try {
+                const res = await fetch(`${API_BASE}/spaces/${spaceId}`)
+                const data = await res.json()
+                const { roomPolygons, placedItems, wallHeight } = data.layout_data
+                set({
+                    roomPolygons,
+                    placedItems,
+                    wallHeight,
+                    editingSpaceId: data.id,
+                    activePolygonId: null,
+                    selectedItemId: null,
+                    selectedWallId: null
+                })
+            } catch (err) {
+                console.error('Failed to load space:', err)
+                set({ isLoading: false })
+            } finally {
+                // Done with API. If there are NO items to load, clear the loading state now.
+                // Otherwise, SceneLoader will handle the reveal once GLBs finish.
+                const state = get()
+                if (!state.placedItems || state.placedItems.length === 0) {
+                    set({ isLoading: false })
+                }
+            }
+        },
+
+        preloadSpace: async (spaceId) => {
+            try {
+                const res = await fetch(`${API_BASE}/spaces/${spaceId}`)
+                const data = await res.json()
+                const { placedItems } = data.layout_data
+                if (placedItems) {
+                    // Start preloading GLBs and textures
+                    // We don't need to await this as it's just a hint to the browser/cache
+                    placedItems.forEach((item: PlacedItem) => {
+                        if (item.modelUrl) {
+                            // We use the dynamic import to get useGLTF without bundling it in the core store if possible,
+                            // or just use the static preload if we can.
+                            import('@react-three/drei').then(drei => {
+                                drei.useGLTF.preload(item.modelUrl)
+                            })
+                        }
+                    })
+                }
+            } catch (err) {
+                console.error('Failed to preload space:', err)
+            }
+        },
+
+        addWallSegment: (points) => {
+            if (points.length < 2) return
+            get().commitHistory()
+            const id = createId()
+            set((s) => ({
+                roomPolygons: [...s.roomPolygons, { id, points, closed: false }],
+                currentWallPoints: [],
+                activePolygonId: id,
+                isDrawingWall: false,
+                activeTool: 'select',
+                hoverPoint: null,
+            }))
+        }
+    }))
+)
