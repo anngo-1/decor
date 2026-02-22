@@ -52,6 +52,8 @@ const SceneModel = memo(function SceneModel({ item, isSelected, showSelectionRin
         clone.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
                 const mesh = child as THREE.Mesh
+                mesh.castShadow = true
+                mesh.receiveShadow = true
                 if (mesh.material) {
                     mesh.material = (mesh.material as THREE.Material).clone()
                 }

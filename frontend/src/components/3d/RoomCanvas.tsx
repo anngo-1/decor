@@ -275,13 +275,13 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
 
     return (
         <Canvas
-            shadows
+            shadows={{ type: THREE.PCFSoftShadowMap }}
             dpr={[1, 2]}
             performance={{ min: 0.5 }}
             gl={{
                 antialias: true,
                 toneMapping: THREE.ACESFilmicToneMapping,
-                preserveDrawingBuffer: true
+                preserveDrawingBuffer: true,
             }}
             style={{ background: '#fcfaff' }}
             onPointerMissed={() => {
@@ -305,12 +305,15 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
                 castShadow={shadowsEnabled}
                 shadow-mapSize-width={2048}
                 shadow-mapSize-height={2048}
+                shadow-bias={-0.0001}
+                shadow-normalBias={0.02}
+                shadow-radius={4}
                 shadow-camera-far={50}
                 shadow-camera-near={0.1}
-                shadow-camera-left={-15}
-                shadow-camera-right={15}
-                shadow-camera-top={15}
-                shadow-camera-bottom={-15}
+                shadow-camera-left={-12}
+                shadow-camera-right={12}
+                shadow-camera-top={12}
+                shadow-camera-bottom={-12}
             />
             <pointLight position={[-8, 8, -8]} intensity={0.5} color="#a0c4ff" />
 
@@ -326,7 +329,7 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
             <AdaptiveEvents />
 
             {shadowsEnabled && (
-                <ContactShadows position={[0, 0, 0]} opacity={0.4} scale={30} blur={2} far={4} />
+                <ContactShadows position={[0, 0, 0]} opacity={0.4} scale={30} blur={2} far={4} resolution={1024} />
             )}
             {!readonly && <WallInteractionPlane />}
 
