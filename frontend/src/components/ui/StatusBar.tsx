@@ -48,12 +48,11 @@ export function StatusBar() {
     const recentTasks = activeTasks.slice(0, 3)
 
     return (
-        <div className="absolute bottom-4 right-4 z-40 flex flex-col gap-2 items-end">
-
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2 items-center">
 
             {/* Generation tasks panel */}
             {recentTasks.length > 0 && (
-                <div className="w-56 bg-white/90 backdrop-blur-xl border border-indigo-100 rounded-2xl p-4 space-y-2 shadow-2xl shadow-indigo-100/50">
+                <div className="w-56 bg-white/90 backdrop-blur-xl border border-indigo-100 rounded-2xl p-4 space-y-2 shadow-xl shadow-indigo-100/50">
                     <div className="flex items-center gap-2 mb-2">
                         <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
                         <span className="text-[11px] font-black uppercase tracking-wider text-indigo-400">AI Generation</span>
@@ -62,11 +61,8 @@ export function StatusBar() {
                 </div>
             )}
 
-            <div className="flex items-center gap-2">
-
-
-                {/* Context hint bar */}
-                <div className="bg-white/90 backdrop-blur-xl border border-indigo-100 rounded-2xl px-4 py-3 shadow-2xl shadow-indigo-100/50">
+            {/* Context hint bar */}
+            <div className="bg-white/90 backdrop-blur-xl border border-indigo-100 rounded-2xl px-4 py-2.5 shadow-xl shadow-indigo-100/50">
                     {activeTool === 'wall' && isDrawingWall && (
                         <div className="flex items-center gap-3">
                             <span className="text-xs font-medium text-indigo-400">
@@ -104,7 +100,6 @@ export function StatusBar() {
                                 : 'Click two points on the floor to measure'}
                         </span>
                     )}
-                </div>
             </div>
         </div>
     )

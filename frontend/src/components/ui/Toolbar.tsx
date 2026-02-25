@@ -1,5 +1,7 @@
 'use client'
 
+import Link from 'next/link'
+import { useState } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
     MousePointer2,
@@ -15,6 +17,7 @@ import {
     Redo2,
     Glasses,
     Save,
+    Film,
 } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { SaveDialog } from './SaveDialog'
@@ -73,9 +76,6 @@ function ToolButton({ icon, label, active, danger, disabled, onClick, badge }: T
 
 const Divider = () => <div className="h-4 w-px bg-indigo-100 mx-1" />
 
-import Link from 'next/link'
-import { useState } from 'react'
-
 export function AppToolbar() {
     const [showSaveDialog, setShowSaveDialog] = useState(false)
     const activeTool = useStore((s) => s.activeTool)
@@ -93,6 +93,10 @@ export function AppToolbar() {
     const redo = useStore((s) => s.redo)
     const canUndo = useStore((s) => s.pastHistory.length > 0)
     const canRedo = useStore((s) => s.futureHistory.length > 0)
+    const showLightingControls = useStore((s) => s.showLightingControls)
+    const toggleLightingControls = useStore((s) => s.toggleLightingControls)
+    const cinematicMode = useStore((s) => s.cinematicMode)
+    const toggleCinematicMode = useStore((s) => s.toggleCinematicMode)
 
     const handleClearRoom = () => {
         if (window.confirm('Are you sure you want to clear all walls and items in the room?')) {
@@ -164,9 +168,9 @@ export function AppToolbar() {
 
             <ToolButton
                 icon={shadowsEnabled ? <Sun className="h-4 w-4" /> : <SunDim className="h-4 w-4" />}
-                label={shadowsEnabled ? 'Shadows On' : 'Shadows Off'}
-                active={shadowsEnabled}
-                onClick={toggleShadows}
+                label="Lighting Settings"
+                active={showLightingControls}
+                onClick={toggleLightingControls}
             />
 
             <Divider />
@@ -184,6 +188,15 @@ export function AppToolbar() {
                 icon={showSidebar ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
                 label={showSidebar ? 'Hide Library' : 'Show Library'}
                 onClick={toggleSidebar}
+            />
+
+            <Divider />
+
+            <ToolButton
+                icon={<Film className="h-4 w-4" />}
+                label="Cinematic Mode"
+                active={cinematicMode}
+                onClick={toggleCinematicMode}
             />
 
             <Divider />

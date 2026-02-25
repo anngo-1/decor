@@ -21,7 +21,7 @@ export function Sidebar() {
     const setDraggedLibraryItem = useStore((s) => s.setDraggedLibraryItem)
     const generationTasks = useStore((s) => s.generationTasks)
     const placeItem = useStore((s) => s.placeItem)
-    const selectItem = useStore((s) => s.selectItem)
+    const setSelection = useStore((s) => s.setSelection)
     const setActiveTool = useStore((s) => s.setActiveTool)
 
     const [activeCategory, setActiveCategory] = useState('All')
@@ -116,7 +116,7 @@ export function Sidebar() {
                                         isGenerated: item.category === 'Generated',
                                         floorTile: item.floorTile,
                                     })
-                                    selectItem(id)
+                                    setSelection({ type: 'item', id })
                                     setActiveTool('select')
                                 }}
                             />

@@ -14,8 +14,7 @@ export function KeyboardShortcuts() {
     const cancelWallDrawing = useStore((s) => s.cancelWallDrawing)
     const isDrawingWall = useStore((s) => s.isDrawingWall)
     const removeItem = useStore((s) => s.removeItem)
-    const selectedItemId = useStore((s) => s.selectedItemId)
-    const selectedWallId = useStore((s) => s.selectedWallId)
+    const selection = useStore((s) => s.selection)
     const deleteWallSegment = useStore((s) => s.deleteWallSegment)
     const undo = useStore((s) => s.undo)
     const redo = useStore((s) => s.redo)
@@ -38,10 +37,10 @@ export function KeyboardShortcuts() {
                     break
                 case 'Delete':
                 case 'Backspace':
-                    if (selectedItemId) {
-                        removeItem(selectedItemId)
-                    } else if (selectedWallId) {
-                        const [polyId, segIdx] = selectedWallId.split('-')
+                    if (selection?.type === 'item') {
+                        removeItem(selection.id)
+                    } else if (selection?.type === 'wall') {
+                        const [polyId, segIdx] = selection.id.split('-')
                         deleteWallSegment(polyId, parseInt(segIdx, 10))
                     }
                     break
@@ -64,7 +63,7 @@ export function KeyboardShortcuts() {
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [setActiveTool, setShowGenerateDialog, cancelWallDrawing, isDrawingWall, removeItem, selectedItemId, selectedWallId, deleteWallSegment, undo, redo])
+    }, [setActiveTool, setShowGenerateDialog, cancelWallDrawing, isDrawingWall, removeItem, selection, deleteWallSegment, undo, redo])
 
     return null
 }

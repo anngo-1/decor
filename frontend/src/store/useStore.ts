@@ -8,10 +8,10 @@ import type {
     EditorTool,
     LibraryItem,
     Space,
+    PlacedLight,
+    EditorSelection,
 } from '@/types'
 
-// Built-in sample library with public GLB URLs (demo)
-// Built-in sample library with public GLB URLs (demo)
 export const SAMPLE_LIBRARY: LibraryItem[] = []
 
 const API_BASE = '/api/backend'
@@ -37,11 +37,11 @@ interface StoreState {
     isDrawingWall: boolean
 
     // Selection
-    selectedWallId: string | null // Format: `${polygonId}-${segmentIndex}`
+    selection: EditorSelection
 
-    // Placed items
+    // Placed items and lights
     placedItems: PlacedItem[]
-    selectedItemId: string | null
+    placedLights: PlacedLight[]
 
     // Editor mode
     activeTool: EditorTool
@@ -57,6 +57,12 @@ interface StoreState {
     draggedLibraryItem: LibraryItem | null
     shadowsEnabled: boolean
     isPointerLocked: boolean
+    cinematicMode: boolean
+    sunAzimuth: number
+    sunElevation: number
+    sunIntensity: number
+    showLightingControls: boolean
+    environmentPreset: string
 
     // Measure tool
     measurePoints: [Vec2, Vec2] | null
@@ -77,20 +83,27 @@ interface StoreState {
     cancelWallDrawing: () => void
     clearRoom: () => void
     setHoverPoint: (pt: Vec2 | null) => void
-    selectWall: (id: string | null) => void
     updateWallColor: (polygonId: string, segmentIndex: number, color: string) => void
+    updateWallHeight: (polygonId: string, segmentIndex: number, height: number) => void
     deleteWallSegment: (polygonId: string, segmentIndex: number) => void
 
     // Actions: Items
     placeItem: (item: Omit<PlacedItem, 'id'>) => string
-    updateItemPosition: (id: string, position: [number, number, number]) => void
+    updateItemPosition: (id: string, position: [number, number, number], noCommit?: boolean) => void
     updateItemRotation: (id: string, rotation: [number, number, number]) => void
     updateItemScale: (id: string, scale: number) => void
     updateItemDimensions: (id: string, dimensions: [number, number, number]) => void
     removeItem: (id: string) => void
-    selectItem: (id: string | null) => void
     setDraggedLibraryItem: (item: LibraryItem | null) => void
     setDragHoverPoint: (pt: [number, number, number] | null) => void
+
+    // Actions: Lights
+    placeLight: (light: Omit<PlacedLight, 'id'>) => string
+    updateLight: (id: string, update: Partial<Omit<PlacedLight, 'id'>>, noCommit?: boolean) => void
+    removeLight: (id: string) => void
+
+    // Universal Selection
+    setSelection: (selection: EditorSelection) => void
 
     // Actions: Tools
     setActiveTool: (tool: EditorTool) => void
@@ -105,6 +118,10 @@ interface StoreState {
     toggleSidebar: () => void
     toggleShadows: () => void
     togglePointerLock: () => void
+    toggleCinematicMode: () => void
+    setLighting: (lighting: { azimuth?: number; elevation?: number; intensity?: number }) => void
+    toggleLightingControls: () => void
+    setEnvironmentPreset: (preset: string) => void
 
     // Backend Actions
     setUserId: (id: string) => void
@@ -124,6 +141,11 @@ function createId() {
     return Math.random().toString(36).slice(2, 10)
 }
 
+type HistoryFields = Pick<StoreState, 'roomPolygons' | 'placedItems' | 'placedLights' | 'wallHeight' | 'sunAzimuth' | 'sunElevation' | 'sunIntensity' | 'environmentPreset'>
+function snapshot({ roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset }: HistoryFields): string {
+    return JSON.stringify({ roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset })
+}
+
 export const useStore = create<StoreState>()(
     subscribeWithSelector((set, get) => ({
         roomPolygons: [],
@@ -131,8 +153,8 @@ export const useStore = create<StoreState>()(
         currentWallPoints: [],
         isDrawingWall: false,
         placedItems: [],
-        selectedItemId: null,
-        selectedWallId: null,
+        placedLights: [],
+        selection: null,
         activeTool: 'select',
         wallHeight: 2.4,
         generationTasks: [
@@ -157,8 +179,14 @@ export const useStore = create<StoreState>()(
         draggedLibraryItem: null,
         dragHoverPoint: null,
         hoverPoint: null,
-        shadowsEnabled: false,
+        shadowsEnabled: true,
         isPointerLocked: false,
+        cinematicMode: false,
+        sunAzimuth: 45,
+        sunElevation: 45,
+        sunIntensity: 1.5,
+        showLightingControls: false,
+        environmentPreset: 'city',
         measurePoints: null,
         measureDistance: null,
 
@@ -176,49 +204,40 @@ export const useStore = create<StoreState>()(
         futureHistory: [],
 
         commitHistory: () => {
-            const { roomPolygons, placedItems, wallHeight, pastHistory } = get()
-            const stateSnapshot = JSON.stringify({ roomPolygons, placedItems, wallHeight })
+            const { pastHistory } = get()
             set({
-                pastHistory: [...pastHistory, stateSnapshot],
-                futureHistory: [] // clear redo stack on new action
+                pastHistory: [...pastHistory, snapshot(get())],
+                futureHistory: [],
             })
         },
 
         undo: () => {
-            const { pastHistory, futureHistory, roomPolygons, placedItems, wallHeight } = get()
+            const { pastHistory, futureHistory } = get()
             if (pastHistory.length === 0) return
-            const previousStateJSON = pastHistory[pastHistory.length - 1]
-            const currentStateSnapshot = JSON.stringify({ roomPolygons, placedItems, wallHeight })
-            const previousState = JSON.parse(previousStateJSON)
-
+            const previousState = JSON.parse(pastHistory[pastHistory.length - 1])
             set({
                 ...previousState,
                 pastHistory: pastHistory.slice(0, -1),
-                futureHistory: [currentStateSnapshot, ...futureHistory],
-                selectedItemId: null,
-                selectedWallId: null,
+                futureHistory: [snapshot(get()), ...futureHistory],
+                selection: null,
             })
         },
 
         redo: () => {
-            const { pastHistory, futureHistory, roomPolygons, placedItems, wallHeight } = get()
+            const { pastHistory, futureHistory } = get()
             if (futureHistory.length === 0) return
-            const nextStateJSON = futureHistory[0]
-            const currentStateSnapshot = JSON.stringify({ roomPolygons, placedItems, wallHeight })
-            const nextState = JSON.parse(nextStateJSON)
-
+            const nextState = JSON.parse(futureHistory[0])
             set({
                 ...nextState,
-                pastHistory: [...pastHistory, currentStateSnapshot],
+                pastHistory: [...pastHistory, snapshot(get())],
                 futureHistory: futureHistory.slice(1),
-                selectedItemId: null,
-                selectedWallId: null,
+                selection: null,
             })
         },
 
         startWallDrawing: () => {
             get().commitHistory()
-            set({ isDrawingWall: true, currentWallPoints: [], activeTool: 'wall', selectedItemId: null, selectedWallId: null })
+            set({ isDrawingWall: true, currentWallPoints: [], activeTool: 'wall', selection: null })
         },
 
         addWallPoint: (point) =>
@@ -266,19 +285,63 @@ export const useStore = create<StoreState>()(
                 currentWallPoints: [],
                 isDrawingWall: false,
                 activePolygonId: null,
-                selectedWallId: null,
                 editingSpaceId: null,
                 placedItems: [],
+                placedLights: [],
                 pastHistory: [],
                 futureHistory: [],
-                selectedItemId: null,
+                selection: null,
                 isLoading: false,
             })
         },
 
+        placeLight: (light) => {
+            get().commitHistory()
+            const id = createId()
+            set((s) => ({
+                placedLights: [...s.placedLights, { ...light, id }],
+                activeTool: 'select',
+            }))
+            return id
+        },
+
+        updateLight: (id, update, noCommit = false) => {
+            if (!noCommit) get().commitHistory()
+            set((s) => ({
+                placedLights: s.placedLights.map((l) => (l.id === id ? { ...l, ...update } : l)),
+            }))
+        },
+
+        removeLight: (id) => {
+            get().commitHistory()
+            set((s) => ({
+                placedLights: s.placedLights.filter((l) => l.id !== id),
+                selection: s.selection?.type === 'light' && s.selection.id === id ? null : s.selection,
+            }))
+        },
+
+        setSelection: (selection) => set((s) => ({
+            selection,
+            showLightingControls: selection?.type === 'light' ? true : s.showLightingControls,
+        })),
+
         setIsLoading: (loading) => set({ isLoading: loading }),
 
-        selectWall: (id) => set({ selectedWallId: id, selectedItemId: null }),
+        updateWallHeight: (polygonId, segmentIndex, height) => {
+            get().commitHistory()
+            set((s) => ({
+                roomPolygons: s.roomPolygons.map((poly) => {
+                    if (poly.id !== polygonId) return poly
+                    return {
+                        ...poly,
+                        segmentProps: {
+                            ...(poly.segmentProps || {}),
+                            [segmentIndex]: { ...((poly.segmentProps || {})[segmentIndex] || {}), height }
+                        }
+                    }
+                })
+            }))
+        },
 
         updateWallColor: (polygonId, segmentIndex, color) => {
             get().commitHistory()
@@ -331,19 +394,22 @@ export const useStore = create<StoreState>()(
                     }
                 }
 
-                return { roomPolygons: newPolygons, selectedWallId: null }
+                return {
+                    roomPolygons: newPolygons,
+                    selection: s.selection?.type === 'wall' && s.selection.id.startsWith(`${polygonId}-`) ? null : s.selection
+                }
             })
         },
 
         placeItem: (item) => {
             get().commitHistory()
             const id = createId()
-            set((s) => ({ placedItems: [...s.placedItems, { ...item, id }], selectedWallId: null }))
+            set((s) => ({ placedItems: [...s.placedItems, { ...item, id }], selection: null }))
             return id
         },
 
-        updateItemPosition: (id, position) => {
-            get().commitHistory()
+        updateItemPosition: (id, position, noCommit = false) => {
+            if (!noCommit) get().commitHistory()
             set((s) => ({
                 placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, position } : it)),
             }))
@@ -373,11 +439,9 @@ export const useStore = create<StoreState>()(
             get().commitHistory()
             set((s) => ({
                 placedItems: s.placedItems.filter((it) => it.id !== id),
-                selectedItemId: s.selectedItemId === id ? null : s.selectedItemId,
+                selection: s.selection?.type === 'item' && s.selection.id === id ? null : s.selection,
             }))
         },
-
-        selectItem: (id) => set({ selectedItemId: id, selectedWallId: null }),
 
         setDraggedLibraryItem: (item) => set({ draggedLibraryItem: item }),
 
@@ -416,6 +480,14 @@ export const useStore = create<StoreState>()(
         toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
         toggleShadows: () => set((s) => ({ shadowsEnabled: !s.shadowsEnabled })),
         togglePointerLock: () => set((s) => ({ isPointerLocked: !s.isPointerLocked })),
+        toggleCinematicMode: () => set((s) => ({ cinematicMode: !s.cinematicMode })),
+        setLighting: (lighting) => set((s) => ({
+            sunAzimuth: lighting.azimuth ?? s.sunAzimuth,
+            sunElevation: lighting.elevation ?? s.sunElevation,
+            sunIntensity: lighting.intensity ?? s.sunIntensity,
+        })),
+        toggleLightingControls: () => set((s) => ({ showLightingControls: !s.showLightingControls })),
+        setEnvironmentPreset: (preset) => set({ environmentPreset: preset }),
 
         setUserId: (id) => set({ userId: id }),
 
@@ -436,7 +508,7 @@ export const useStore = create<StoreState>()(
         },
 
         saveSpace: async (title, description = '', isPublished = false) => {
-            const { userId, roomPolygons, placedItems, wallHeight, editingSpaceId } = get()
+            const { userId, roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset, editingSpaceId, getScreenshot } = get()
             if (!userId) return null
 
             set({ isSaving: true })
@@ -453,8 +525,15 @@ export const useStore = create<StoreState>()(
                         title,
                         description,
                         is_published: isPublished,
-                        layout_data: { roomPolygons, placedItems, wallHeight },
-                        preview_url: get().getScreenshot ? get().getScreenshot!() : null
+                        layout_data: {
+                            roomPolygons,
+                            placedItems,
+                            placedLights,
+                            wallHeight,
+                            environmentPreset,
+                            lighting: { azimuth: sunAzimuth, elevation: sunElevation, intensity: sunIntensity }
+                        },
+                        preview_url: getScreenshot ? getScreenshot() : null
                     })
                 })
                 const data = await res.json()
@@ -474,15 +553,19 @@ export const useStore = create<StoreState>()(
             try {
                 const res = await fetch(`${API_BASE}/spaces/${spaceId}`)
                 const data = await res.json()
-                const { roomPolygons, placedItems, wallHeight } = data.layout_data
+                const { roomPolygons, placedItems, placedLights, wallHeight, environmentPreset, lighting } = data.layout_data
                 set({
                     roomPolygons,
                     placedItems,
+                    placedLights: placedLights || [],
                     wallHeight,
+                    environmentPreset: environmentPreset || 'city',
+                    sunAzimuth: lighting?.azimuth ?? 45,
+                    sunElevation: lighting?.elevation ?? 45,
+                    sunIntensity: lighting?.intensity ?? 1.5,
                     editingSpaceId: data.id,
                     activePolygonId: null,
-                    selectedItemId: null,
-                    selectedWallId: null
+                    selection: null
                 })
             } catch (err) {
                 console.error('Failed to load space:', err)

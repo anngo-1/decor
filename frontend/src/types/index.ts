@@ -1,5 +1,3 @@
-import { Vector3 } from 'three'
-
 export type Vec2 = { x: number; z: number }
 export type Vec3 = { x: number; y: number; z: number }
 
@@ -14,7 +12,7 @@ export type RoomPolygon = {
   id: string
   points: Vec2[]  // XZ plane
   closed: boolean
-  segmentProps?: Record<number, { color?: string }>
+  segmentProps?: Record<number, { color?: string; height?: number }>
 }
 
 export type PlacedItem = {
@@ -33,6 +31,14 @@ export type PlacedItem = {
   floorTile?: FloorTile
 }
 
+export type PlacedLight = {
+  id: string
+  position: [number, number, number]
+  color: string
+  intensity: number
+  distance: number
+}
+
 export type GenerationTask = {
   taskId: string
   status: 'queued' | 'processing' | 'completed' | 'failed'
@@ -43,6 +49,11 @@ export type GenerationTask = {
 }
 
 export type EditorTool = 'select' | 'wall' | 'export' | 'measure'
+
+export type EditorSelection = {
+  type: 'item' | 'wall' | 'light'
+  id: string
+} | null
 
 export type LibraryItem = {
   id: string
@@ -65,7 +76,14 @@ export type Space = {
   layout_data: {
     roomPolygons: RoomPolygon[]
     placedItems: PlacedItem[]
+    placedLights?: PlacedLight[]
     wallHeight: number
+    environmentPreset?: string
+    lighting?: {
+      azimuth: number
+      elevation: number
+      intensity: number
+    }
   }
   created_at: string
   updated_at: string
