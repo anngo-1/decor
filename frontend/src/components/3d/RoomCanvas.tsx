@@ -3,10 +3,12 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useThree, ThreeEvent, useFrame } from '@react-three/fiber'
 import { OrbitControls, PerspectiveCamera, PointerLockControls, Bvh, Environment, Grid } from '@react-three/drei'
+import { EffectComposer, SSAO } from '@react-three/postprocessing'
+import { BlendFunction } from 'postprocessing'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import * as THREE from 'three'
 import { SceneItems } from './SceneItems'
-import { WallSystem, WallPreview } from './WallSystem'
+import { WallSystem, WallPreview, RoomCeilingAndFloor } from './WallSystem'
 import { SceneLoader } from './SceneLoader'
 import { useStore } from '@/store/useStore'
 import { snapToGrid, snapPoint, snapToPoint, applyAlignmentSnap } from '@/utils/grid'
@@ -93,27 +95,37 @@ function OrbitEventSuppressor({ orbitRef }: { orbitRef: React.RefObject<OrbitCon
 }
 
 /**
- * Disables Three.js's default "re-render shadow maps every frame" behavior.
- * Shadow maps only need to update when scene objects or lights change — NOT when the camera orbits.
- * This is the biggest single win for orbit performance when shadows are enabled.
+ * Disables Three.js's per-frame shadow map updates.
+ * Re-renders shadow maps for a short burst of frames after any scene-relevant state change.
+ * The burst (60 frames) covers async GLB loads that resolve AFTER the state change fires —
+ * without it, newly loaded meshes would be missing from the shadow map.
  */
 function ShadowOptimizer() {
     const { gl } = useThree()
     const placedItems = useStore((s) => s.placedItems)
+    const placedLights = useStore((s) => s.placedLights)
     const roomPolygons = useStore((s) => s.roomPolygons)
     const sunAzimuth = useStore((s) => s.sunAzimuth)
     const sunElevation = useStore((s) => s.sunElevation)
     const shadowsEnabled = useStore((s) => s.shadowsEnabled)
+    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
+    const pendingFrames = useRef(60)
 
     useEffect(() => {
         gl.shadowMap.autoUpdate = false
-        gl.shadowMap.needsUpdate = true
         return () => { gl.shadowMap.autoUpdate = true }
     }, [gl])
 
     useEffect(() => {
-        if (shadowsEnabled) gl.shadowMap.needsUpdate = true
-    }, [placedItems, roomPolygons, sunAzimuth, sunElevation, shadowsEnabled, gl])
+        if (shadowsEnabled) pendingFrames.current = 60
+    }, [placedItems, placedLights, roomPolygons, sunAzimuth, sunElevation, shadowsEnabled, ceilingEnabled])
+
+    useFrame(() => {
+        if (pendingFrames.current > 0) {
+            gl.shadowMap.needsUpdate = true
+            pendingFrames.current--
+        }
+    })
 
     return null
 }
@@ -143,13 +155,13 @@ function ScreenshotManager() {
     return null
 }
 
-/** Attaches native drag-drop events to the gl.domElement canvas for furniture placement. */
+/** Attaches native drag-drop events to the gl.domElement canvas for furniture + window placement. */
 function DragDropHandler() {
-    const { camera, gl } = useThree()
-    // Camera comes from R3F, not Zustand — keep a ref so the stable event handlers
-    // always see the current camera without needing a re-render.
+    const { camera, gl, scene } = useThree()
     const cameraRef = useRef(camera)
+    const sceneRef = useRef(scene)
     useEffect(() => { cameraRef.current = camera }, [camera])
+    useEffect(() => { sceneRef.current = scene }, [scene])
 
     useEffect(() => {
         const canvas = gl.domElement
@@ -157,18 +169,69 @@ function DragDropHandler() {
         const raycaster = new THREE.Raycaster()
         const hit = new THREE.Vector3()
 
+        /** Returns NDC coords from a DragEvent relative to the canvas. */
+        const getNDC = (e: DragEvent) => {
+            const rect = canvas.getBoundingClientRect()
+            return new THREE.Vector2(
+                ((e.clientX - rect.left) / rect.width) * 2 - 1,
+                -((e.clientY - rect.top) / rect.height) * 2 + 1,
+            )
+        }
+
         const onDragOver = (e: DragEvent) => {
             e.preventDefault()
-            // Read Zustand state directly — avoids the React 19 concurrent-mode race
-            // where stateRef lags behind because the render+useEffect hasn't committed yet.
-            const { draggedLibraryItem, setDragHoverPoint } = useStore.getState()
+            const { draggedLibraryItem, setDragHoverPoint, setDragWindowHit, roomPolygons } = useStore.getState()
             if (!draggedLibraryItem) return
 
-            const rect = canvas.getBoundingClientRect()
-            const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1
-            const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1
+            raycaster.setFromCamera(getNDC(e), cameraRef.current)
 
-            raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), cameraRef.current)
+            if (draggedLibraryItem.isWindow) {
+                // --- Window: snap to wall face ---
+                const wallMeshes: THREE.Object3D[] = []
+                sceneRef.current.traverse((obj) => { if (obj.userData.isWall) wallMeshes.push(obj) })
+
+                const hits = raycaster.intersectObjects(wallMeshes, false)
+                if (hits.length > 0) {
+                    const wallHit = hits[0]
+                    const { polygonId, segmentIndex } = wallHit.object.userData as { polygonId: string; segmentIndex: number }
+                    const poly = roomPolygons.find((p) => p.id === polygonId)
+                    if (poly) {
+                        const pts = poly.points
+                        const pairs: Array<[{ x: number; z: number }, { x: number; z: number }]> = []
+                        for (let i = 0; i < pts.length - 1; i++) pairs.push([pts[i], pts[i + 1]])
+                        if (poly.closed) pairs.push([pts[pts.length - 1], pts[0]])
+                        const [p1, p2] = pairs[segmentIndex]
+                        const dx = p2.x - p1.x, dz = p2.z - p1.z
+                        const length = Math.sqrt(dx * dx + dz * dz)
+                        if (length > 0) {
+                            const dirX = dx / length, dirZ = dz / length
+                            const wallAngle = Math.atan2(dx, dz)
+                            const winSize = draggedLibraryItem.defaultWindowSize ?? { width: 1.2, height: 1.2, sillHeight: 0.9 }
+                            const halfW = winSize.width / 2
+                            const margin = halfW / length
+                            const t = Math.max(margin + 0.01, Math.min(1 - margin - 0.01,
+                                ((wallHit.point.x - p1.x) * dirX + (wallHit.point.z - p1.z) * dirZ) / length
+                            ))
+                            const winX = p1.x + t * dx
+                            const winZ = p1.z + t * dz
+                            const winY = winSize.sillHeight + winSize.height / 2
+                            setDragWindowHit({
+                                polygonId,
+                                segmentIndex,
+                                positionAlongWall: t,
+                                worldPosition: [winX, winY, winZ],
+                                wallAngle,
+                                windowSize: winSize,
+                            })
+                        }
+                    }
+                } else {
+                    setDragWindowHit(null)
+                }
+                return // don't update ground hover for windows
+            }
+
+            // --- Furniture: snap to ground plane ---
             if (raycaster.ray.intersectPlane(groundPlane, hit)) {
                 setDragHoverPoint([snapToGrid(hit.x), 0, snapToGrid(hit.z)])
             }
@@ -176,20 +239,39 @@ function DragDropHandler() {
 
         const onDragLeave = () => {
             useStore.getState().setDragHoverPoint(null)
+            useStore.getState().setDragWindowHit(null)
         }
 
         const onDrop = (e: DragEvent) => {
             e.preventDefault()
-            const { draggedLibraryItem, placeItem, setDraggedLibraryItem, setDragHoverPoint } = useStore.getState()
+            const { draggedLibraryItem, dragWindowHit, placeItem, setDraggedLibraryItem, setDragHoverPoint, setDragWindowHit } = useStore.getState()
             if (!draggedLibraryItem) return
 
-            const rect = canvas.getBoundingClientRect()
-            const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1
-            const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1
+            if (draggedLibraryItem.isWindow) {
+                if (dragWindowHit) {
+                    placeItem({
+                        name: draggedLibraryItem.name,
+                        modelUrl: '',
+                        isWindow: true,
+                        wallRef: {
+                            polygonId: dragWindowHit.polygonId,
+                            segmentIndex: dragWindowHit.segmentIndex,
+                            positionAlongWall: dragWindowHit.positionAlongWall,
+                        },
+                        windowSize: dragWindowHit.windowSize,
+                        position: dragWindowHit.worldPosition,
+                        rotation: [0, dragWindowHit.wallAngle, 0],
+                        scale: 1,
+                    })
+                }
+                setDraggedLibraryItem(null)
+                setDragWindowHit(null)
+                return
+            }
 
-            raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), cameraRef.current)
+            // --- Furniture drop ---
+            raycaster.setFromCamera(getNDC(e), cameraRef.current)
             raycaster.ray.intersectPlane(groundPlane, hit)
-
             placeItem({
                 name: draggedLibraryItem.name,
                 modelUrl: draggedLibraryItem.modelUrl,
@@ -416,6 +498,17 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
             <SunLight />
             <PlacedLights orbitRef={orbitRef} />
 
+            {/* Floor background — sits behind the grid so transparent grid cells
+                show this color instead of the dark HDRI environment sphere.
+                200×200 keeps all corners within the camera far=100m frustum,
+                preventing depth-clamping artifacts in the SSAO pass. */}
+            {!readonly && (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, 0]}>
+                    <planeGeometry args={[200, 200]} />
+                    <meshBasicMaterial color="#fcfaff" depthWrite={false} />
+                </mesh>
+            )}
+
             {!readonly && (
                 <Grid
                     args={[200, 200]}
@@ -442,6 +535,7 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
 
             <Bvh firstHitOnly>
                 <WallSystem readonly={readonly} />
+                <RoomCeilingAndFloor />
                 {!readonly && <WallPreview />}
                 <SceneItems readonly={readonly} />
             </Bvh>
@@ -470,6 +564,25 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
                     {isPointerLocked && <PointerLockControls />}
                     <WASDControls orbitRef={orbitRef} isPointerLocked={isPointerLocked} />
                 </>
+            )}
+
+            {/* SSAO — screen-space ambient occlusion. Adds soft darkening in corners,
+                under furniture, and along wall-floor joints. This is the primary reason
+                Blender/real-life renders look richer than raw WebGL. Only active when
+                the user has shadows enabled. */}
+            {shadowsEnabled && (
+                <EffectComposer enableNormalPass multisampling={0}>
+                    <SSAO
+                        blendFunction={BlendFunction.MULTIPLY}
+                        samples={16}
+                        radius={0.1}
+                        intensity={1.5}
+                        luminanceInfluence={0.6}
+                        bias={0.05}
+                        worldDistanceThreshold={10}
+                        worldDistanceFalloff={5}
+                    />
+                </EffectComposer>
             )}
         </Canvas>
     )
@@ -563,6 +676,12 @@ function SunLight() {
     const sunElevation = useStore((s) => s.sunElevation)
     const sunIntensity = useStore((s) => s.sunIntensity)
     const shadowsEnabled = useStore((s) => s.shadowsEnabled)
+    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
+    
+    // The ceiling geometry is now an extruded block (0.2m thick), which robustly
+    // blocks the sun rays from leaking through. Sunbeams can now naturally stream 
+    // through windows without needing artificial attenuation.
+    const effectiveIntensity = sunIntensity
 
     const phi = (90 - sunElevation) * (Math.PI / 180)
     const theta = sunAzimuth * (Math.PI / 180)
@@ -574,17 +693,18 @@ function SunLight() {
     return (
         <directionalLight
             position={[x, y, z]}
-            intensity={sunIntensity}
-            castShadow={shadowsEnabled}
-            shadow-mapSize={[512, 512]}
-            shadow-camera-near={0.5}
-            shadow-camera-far={60}
-            shadow-camera-left={-15}
-            shadow-camera-right={15}
-            shadow-camera-top={15}
-            shadow-camera-bottom={-15}
-            shadow-bias={-0.001}
-            shadow-radius={4}
+            intensity={effectiveIntensity}
+            castShadow={shadowsEnabled && !ceilingEnabled}
+            shadow-mapSize={[2048, 2048]}
+            shadow-camera-near={0.1}
+            shadow-camera-far={100}
+            shadow-camera-left={-20}
+            shadow-camera-right={20}
+            shadow-camera-top={20}
+            shadow-camera-bottom={-20}
+            shadow-bias={-0.0001}
+            shadow-normalBias={0.05}
+            shadow-radius={2}
         />
     )
 }
@@ -592,11 +712,20 @@ function SunLight() {
 /** Handles the HDRI Environment and Ambient base light */
 function AmbientLightRig() {
     const environmentPreset = useStore((s) => s.environmentPreset)
-    // Reduce raw ambient when using HDRI to let the map do the work
+    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
     return (
         <>
-            <ambientLight intensity={0.2} />
-            <Environment preset={environmentPreset as any} />
+            {/* Boost ambient when ceiling blocks sun so the room stays lit by default.
+                Users are expected to place Custom Lights for interior illumination. */}
+            <ambientLight intensity={ceilingEnabled ? 0.6 : 0.2} />
+            {/* background shows the HDRI as visible sky through windows and above walls.
+                Reduce backgroundIntensity when ceiling is on — less HDRI bleed needed. */}
+            <Environment
+                preset={environmentPreset as any}
+                background
+                backgroundBlurriness={0.7}
+                backgroundIntensity={ceilingEnabled ? 0.15 : 0.5}
+            />
         </>
     )
 }
@@ -613,7 +742,6 @@ function PlacedLightMesh({
 }) {
     const setSelection = useStore((s) => s.setSelection)
     const showLightingControls = useStore((s) => s.showLightingControls)
-    const shadowsEnabled = useStore((s) => s.shadowsEnabled)
     const { gl } = useThree()
 
     return (
@@ -655,10 +783,14 @@ function PlacedLightMesh({
                 </>
             )}
 
+            {/* Interior decorative lights (lamps) don't cast hard cube-map shadows
+                in real life — they emit soft warm light absorbed by the room.
+                Directional sun handles hard shadows; SSAO handles contact shadows. */}
             <pointLight
                 distance={light.distance}
                 intensity={light.intensity}
                 color={light.color}
+                decay={2}
             />
         </group>
     )

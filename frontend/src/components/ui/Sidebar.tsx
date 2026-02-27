@@ -7,7 +7,7 @@ import { useStore, SAMPLE_LIBRARY } from '@/store/useStore'
 import type { LibraryItem } from '@/types'
 import { ItemIcon } from './ItemIcon'
 
-const CATEGORIES = ['All', 'Furniture', 'Decor', 'Lighting', 'Textiles', 'Generated']
+const CATEGORIES = ['All', 'Furniture', 'Decor', 'Lighting', 'Textiles', 'Windows', 'Generated']
 
 // Preload transparent image to prevent drag ghost image rendering race conditions
 let emptyImage: HTMLImageElement | null = null
@@ -137,7 +137,7 @@ export function Sidebar() {
             </ScrollArea.Root>
 
             <p className="text-center text-[10px] font-medium text-indigo-300 pb-3">
-                Drag to floor or click to add to scene
+                Drag to scene · Windows snap to walls
             </p>
         </aside>
     )

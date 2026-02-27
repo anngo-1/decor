@@ -1,7 +1,7 @@
 'use client'
 
 import {
-    Armchair, Table2, Bed, Lamp, Box, BookOpen, Tv, Coffee
+    Armchair, Table2, Bed, Lamp, Box, BookOpen, Tv, Coffee, AppWindow
 } from 'lucide-react'
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -13,6 +13,7 @@ const iconMap: Record<string, React.ReactNode> = {
     tv: <Tv className="h-10 w-10 text-cyan-300 opacity-60" />,
     coffee: <Coffee className="h-10 w-10 text-orange-300 opacity-60" />,
     book: <BookOpen className="h-10 w-10 text-green-300 opacity-60" />,
+    window: <AppWindow className="h-10 w-10 text-sky-300 opacity-60" />,
 }
 
 export function ItemIcon({ name }: { name: string }) {

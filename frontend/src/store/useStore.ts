@@ -10,9 +10,47 @@ import type {
     Space,
     PlacedLight,
     EditorSelection,
+    WindowOpening,
 } from '@/types'
 
-export const SAMPLE_LIBRARY: LibraryItem[] = []
+export type DragWindowHit = {
+    polygonId: string
+    segmentIndex: number
+    positionAlongWall: number
+    worldPosition: [number, number, number]
+    wallAngle: number
+    windowSize: { width: number; height: number; sillHeight: number }
+}
+
+export const SAMPLE_LIBRARY: LibraryItem[] = [
+    {
+        id: 'window-standard',
+        name: 'Standard Window',
+        modelUrl: '',
+        thumbnailUrl: '',
+        category: 'Windows',
+        isWindow: true,
+        defaultWindowSize: { width: 1.2, height: 1.2, sillHeight: 0.9 },
+    },
+    {
+        id: 'window-wide',
+        name: 'Wide Window',
+        modelUrl: '',
+        thumbnailUrl: '',
+        category: 'Windows',
+        isWindow: true,
+        defaultWindowSize: { width: 2.0, height: 1.2, sillHeight: 0.9 },
+    },
+    {
+        id: 'window-tall',
+        name: 'Tall Window',
+        modelUrl: '',
+        thumbnailUrl: '',
+        category: 'Windows',
+        isWindow: true,
+        defaultWindowSize: { width: 0.8, height: 1.6, sillHeight: 0.5 },
+    },
+]
 
 const API_BASE = '/api/backend'
 
@@ -56,6 +94,7 @@ interface StoreState {
     showSidebar: boolean
     draggedLibraryItem: LibraryItem | null
     shadowsEnabled: boolean
+    ceilingEnabled: boolean
     isPointerLocked: boolean
     cinematicMode: boolean
     sunAzimuth: number
@@ -74,6 +113,7 @@ interface StoreState {
 
     // Drag preview hover
     dragHoverPoint: [number, number, number] | null
+    dragWindowHit: DragWindowHit | null
 
     // Actions: Wall
     startWallDrawing: () => void
@@ -86,16 +126,21 @@ interface StoreState {
     updateWallColor: (polygonId: string, segmentIndex: number, color: string) => void
     updateWallHeight: (polygonId: string, segmentIndex: number, height: number) => void
     deleteWallSegment: (polygonId: string, segmentIndex: number) => void
+    addWindowToWall: (polygonId: string, segmentIndex: number, window: Omit<WindowOpening, 'id'>) => void
+    removeWindowFromWall: (polygonId: string, segmentIndex: number, windowId: string) => void
 
     // Actions: Items
     placeItem: (item: Omit<PlacedItem, 'id'>) => string
     updateItemPosition: (id: string, position: [number, number, number], noCommit?: boolean) => void
+    updateWindowPlacement: (id: string, positionAlongWall: number, noCommit?: boolean) => void
     updateItemRotation: (id: string, rotation: [number, number, number]) => void
     updateItemScale: (id: string, scale: number) => void
+    updateWindowSize: (id: string, width: number, height: number) => void
     updateItemDimensions: (id: string, dimensions: [number, number, number]) => void
     removeItem: (id: string) => void
     setDraggedLibraryItem: (item: LibraryItem | null) => void
     setDragHoverPoint: (pt: [number, number, number] | null) => void
+    setDragWindowHit: (hit: DragWindowHit | null) => void
 
     // Actions: Lights
     placeLight: (light: Omit<PlacedLight, 'id'>) => string
@@ -117,6 +162,7 @@ interface StoreState {
     setShowGenerateDialog: (v: boolean) => void
     toggleSidebar: () => void
     toggleShadows: () => void
+    toggleCeiling: () => void
     togglePointerLock: () => void
     toggleCinematicMode: () => void
     setLighting: (lighting: { azimuth?: number; elevation?: number; intensity?: number }) => void
@@ -178,8 +224,10 @@ export const useStore = create<StoreState>()(
         showSidebar: true,
         draggedLibraryItem: null,
         dragHoverPoint: null,
+        dragWindowHit: null,
         hoverPoint: null,
         shadowsEnabled: true,
+        ceilingEnabled: false,
         isPointerLocked: false,
         cinematicMode: false,
         sunAzimuth: 45,
@@ -401,6 +449,47 @@ export const useStore = create<StoreState>()(
             })
         },
 
+        addWindowToWall: (polygonId, segmentIndex, window) => {
+            get().commitHistory()
+            const id = createId()
+            set((s) => ({
+                roomPolygons: s.roomPolygons.map((poly) => {
+                    if (poly.id !== polygonId) return poly
+                    const existing = (poly.segmentProps || {})[segmentIndex] || {}
+                    return {
+                        ...poly,
+                        segmentProps: {
+                            ...(poly.segmentProps || {}),
+                            [segmentIndex]: {
+                                ...existing,
+                                windows: [...(existing.windows || []), { ...window, id }],
+                            },
+                        },
+                    }
+                }),
+            }))
+        },
+
+        removeWindowFromWall: (polygonId, segmentIndex, windowId) => {
+            get().commitHistory()
+            set((s) => ({
+                roomPolygons: s.roomPolygons.map((poly) => {
+                    if (poly.id !== polygonId) return poly
+                    const existing = (poly.segmentProps || {})[segmentIndex] || {}
+                    return {
+                        ...poly,
+                        segmentProps: {
+                            ...(poly.segmentProps || {}),
+                            [segmentIndex]: {
+                                ...existing,
+                                windows: (existing.windows || []).filter((w) => w.id !== windowId),
+                            },
+                        },
+                    }
+                }),
+            }))
+        },
+
         placeItem: (item) => {
             get().commitHistory()
             const id = createId()
@@ -411,7 +500,39 @@ export const useStore = create<StoreState>()(
         updateItemPosition: (id, position, noCommit = false) => {
             if (!noCommit) get().commitHistory()
             set((s) => ({
-                placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, position } : it)),
+                placedItems: s.placedItems.map((it) => {
+                    if (it.id !== id) return it
+                    // For window items: keep wall hole in sync when Y (elevation) changes
+                    if (it.isWindow && it.windowSize && position[1] !== it.position[1]) {
+                        const newSill = Math.max(0, position[1] - it.windowSize.height / 2)
+                        return { ...it, position, windowSize: { ...it.windowSize, sillHeight: newSill } }
+                    }
+                    return { ...it, position }
+                }),
+            }))
+        },
+
+        updateWindowPlacement: (id, positionAlongWall, noCommit = false) => {
+            if (!noCommit) get().commitHistory()
+            set((s) => ({
+                placedItems: s.placedItems.map((it) => {
+                    if (it.id !== id || !it.wallRef || !it.windowSize) return it
+                    const poly = s.roomPolygons.find((p) => p.id === it.wallRef!.polygonId)
+                    if (!poly) return it
+                    const pts = poly.points
+                    const pairs: [Vec2, Vec2][] = []
+                    for (let i = 0; i < pts.length - 1; i++) pairs.push([pts[i], pts[i + 1]])
+                    if (poly.closed) pairs.push([pts[pts.length - 1], pts[0]])
+                    const pair = pairs[it.wallRef.segmentIndex]
+                    if (!pair) return it
+                    const [p1, p2] = pair
+                    const dx = p2.x - p1.x, dz = p2.z - p1.z
+                    return {
+                        ...it,
+                        position: [p1.x + positionAlongWall * dx, it.position[1], p1.z + positionAlongWall * dz],
+                        wallRef: { ...it.wallRef, positionAlongWall },
+                    }
+                }),
             }))
         },
 
@@ -426,6 +547,17 @@ export const useStore = create<StoreState>()(
             get().commitHistory()
             set((s) => ({
                 placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, scale } : it)),
+            }))
+        },
+
+        updateWindowSize: (id, width, height) => {
+            get().commitHistory()
+            set((s) => ({
+                placedItems: s.placedItems.map((it) => {
+                    if (it.id !== id || !it.isWindow || !it.windowSize) return it
+                    const sillHeight = Math.max(0, it.position[1] - height / 2)
+                    return { ...it, windowSize: { ...it.windowSize, width, height, sillHeight } }
+                }),
             }))
         },
 
@@ -446,6 +578,7 @@ export const useStore = create<StoreState>()(
         setDraggedLibraryItem: (item) => set({ draggedLibraryItem: item }),
 
         setDragHoverPoint: (pt) => set({ dragHoverPoint: pt }),
+        setDragWindowHit: (hit) => set({ dragWindowHit: hit }),
 
         setActiveTool: (tool) => {
             const { isDrawingWall, cancelWallDrawing } = get()
@@ -479,6 +612,7 @@ export const useStore = create<StoreState>()(
         setShowGenerateDialog: (v) => set({ showGenerateDialog: v }),
         toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
         toggleShadows: () => set((s) => ({ shadowsEnabled: !s.shadowsEnabled })),
+        toggleCeiling: () => set((s) => ({ ceilingEnabled: !s.ceilingEnabled })),
         togglePointerLock: () => set((s) => ({ isPointerLocked: !s.isPointerLocked })),
         toggleCinematicMode: () => set((s) => ({ cinematicMode: !s.cinematicMode })),
         setLighting: (lighting) => set((s) => ({

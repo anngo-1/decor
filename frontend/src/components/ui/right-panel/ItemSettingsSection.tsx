@@ -10,6 +10,7 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
     const updateItemRotation = useStore((s) => s.updateItemRotation)
     const updateItemScale = useStore((s) => s.updateItemScale)
     const updateItemPosition = useStore((s) => s.updateItemPosition)
+    const updateWindowSize = useStore((s) => s.updateWindowSize)
     const removeItem = useStore((s) => s.removeItem)
 
     const item = placedItems.find((it) => it.id === itemId)
@@ -24,10 +25,10 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
         <div className="flex flex-col gap-6 animate-fade-in">
             {/* Header Info */}
             <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">{item.isGenerated ? 'Generated' : 'Library Item'}</span>
+                <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">{item.isWindow ? 'Window' : (item.isGenerated ? 'Generated' : 'Library Item')}</span>
                 <span className="text-sm font-black text-indigo-950 leading-tight">{item.name}</span>
 
-                {item.price && (
+                {item.price && !item.isWindow && (
                     <div className="flex items-center gap-3 mt-1.5">
                         <span className="text-sm text-indigo-600 font-black">
                             ${item.price.toLocaleString()}
@@ -53,7 +54,7 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
             <div className="flex flex-col gap-4">
                 <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Transform</span>
 
-                {item.dimensions && (
+                {item.dimensions && !item.isWindow && (
                     <div className="flex items-center justify-between bg-indigo-50/50 px-3 py-2 rounded-xl">
                         <span className="text-xs font-bold text-indigo-400">Dimensions</span>
                         <div className="flex items-center gap-1.5 text-[11px] text-indigo-950 font-bold tracking-tight bg-white px-2 py-0.5 rounded shadow-sm border border-indigo-100">
@@ -63,28 +64,70 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
                 )}
 
                 {/* Scale */}
-                <div className="flex flex-col gap-2">
-                    <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-indigo-400">Scale</span>
-                        <span className="text-[10px] font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">{item.scale.toFixed(2)}x</span>
+                {!item.isWindow && (
+                    <div className="flex flex-col gap-2">
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-indigo-400">Scale</span>
+                            <span className="text-[10px] font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">{item.scale.toFixed(2)}x</span>
+                        </div>
+                        <Slider.Root
+                            className="relative flex items-center select-none touch-none w-full h-5"
+                            value={[item.scale]}
+                            min={0.1} max={5.0} step={0.05}
+                            onValueChange={([v]) => updateItemScale(item.id, v)}
+                        >
+                            <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
+                                <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
+                            </Slider.Track>
+                            <Slider.Thumb className="block w-4 h-4 bg-white border-2 border-indigo-500 shadow-md rounded-full hover:scale-110 transition-transform focus:outline-none" />
+                        </Slider.Root>
                     </div>
-                    <Slider.Root
-                        className="relative flex items-center select-none touch-none w-full h-5"
-                        value={[item.scale]}
-                        min={0.1} max={5.0} step={0.05}
-                        onValueChange={([v]) => updateItemScale(item.id, v)}
-                    >
-                        <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
-                            <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
-                        </Slider.Track>
-                        <Slider.Thumb className="block w-4 h-4 bg-white border-2 border-indigo-500 shadow-md rounded-full hover:scale-110 transition-transform focus:outline-none" />
-                    </Slider.Root>
-                </div>
+                )}
+
+                {/* Window Specific Properties */}
+                {item.isWindow && item.windowSize && (
+                    <>
+                        <div className="flex flex-col gap-2">
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs font-bold text-indigo-400">Width</span>
+                                <span className="text-[10px] font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">{item.windowSize.width.toFixed(2)}m</span>
+                            </div>
+                            <Slider.Root
+                                className="relative flex items-center select-none touch-none w-full h-5"
+                                value={[item.windowSize.width]}
+                                min={0.3} max={4.0} step={0.1}
+                                onValueChange={([v]) => updateWindowSize(item.id, v, item.windowSize!.height)}
+                            >
+                                <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
+                                    <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
+                                </Slider.Track>
+                                <Slider.Thumb className="block w-4 h-4 bg-white border-2 border-indigo-500 shadow-md rounded-full hover:scale-110 transition-transform focus:outline-none" />
+                            </Slider.Root>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs font-bold text-indigo-400">Height</span>
+                                <span className="text-[10px] font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">{item.windowSize.height.toFixed(2)}m</span>
+                            </div>
+                            <Slider.Root
+                                className="relative flex items-center select-none touch-none w-full h-5"
+                                value={[item.windowSize.height]}
+                                min={0.3} max={3.0} step={0.1}
+                                onValueChange={([v]) => updateWindowSize(item.id, item.windowSize!.width, v)}
+                            >
+                                <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
+                                    <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
+                                </Slider.Track>
+                                <Slider.Thumb className="block w-4 h-4 bg-white border-2 border-indigo-500 shadow-md rounded-full hover:scale-110 transition-transform focus:outline-none" />
+                            </Slider.Root>
+                        </div>
+                    </>
+                )}
 
                 {/* Elevation */}
                 <div className="flex flex-col gap-2">
                     <div className="flex justify-between items-center">
-                        <span className="text-xs font-bold text-indigo-400">Elevation</span>
+                        <span className="text-xs font-bold text-indigo-400">{item.isWindow ? 'Center Elevation' : 'Elevation'}</span>
                         <span className="text-[10px] font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">{item.position[1].toFixed(2)}m</span>
                     </div>
                     <Slider.Root
@@ -101,25 +144,27 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
                 </div>
 
                 {/* Rotation */}
-                <div className="flex justify-between items-center bg-indigo-50/50 p-1.5 rounded-xl">
-                    <span className="text-xs font-bold text-indigo-400 px-2 pl-2">Rotation</span>
-                    <div className="flex gap-1">
-                        <button
-                            onClick={() => rotate(-Math.PI / 8)}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white shadow-sm border border-indigo-100 hover:border-indigo-300 hover:text-indigo-600 text-indigo-400 transition-all"
-                            title="Rotate left"
-                        >
-                            <RotateCcw className="h-3 w-3" />
-                        </button>
-                        <button
-                            onClick={() => rotate(Math.PI / 8)}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white shadow-sm border border-indigo-100 hover:border-indigo-300 hover:text-indigo-600 text-indigo-400 transition-all"
-                            title="Rotate right"
-                        >
-                            <RotateCw className="h-3 w-3" />
-                        </button>
+                {!item.isWindow && (
+                    <div className="flex justify-between items-center bg-indigo-50/50 p-1.5 rounded-xl">
+                        <span className="text-xs font-bold text-indigo-400 px-2 pl-2">Rotation</span>
+                        <div className="flex gap-1">
+                            <button
+                                onClick={() => rotate(-Math.PI / 8)}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg bg-white shadow-sm border border-indigo-100 hover:border-indigo-300 hover:text-indigo-600 text-indigo-400 transition-all"
+                                title="Rotate left"
+                            >
+                                <RotateCcw className="h-3 w-3" />
+                            </button>
+                            <button
+                                onClick={() => rotate(Math.PI / 8)}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg bg-white shadow-sm border border-indigo-100 hover:border-indigo-300 hover:text-indigo-600 text-indigo-400 transition-all"
+                                title="Rotate right"
+                            >
+                                <RotateCw className="h-3 w-3" />
+                            </button>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
 
             <div className="mt-4 pt-4 border-t border-red-100">

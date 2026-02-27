@@ -24,6 +24,8 @@ export function WallSettingsSection({ wallId }: { wallId: string }) {
     const updateWallHeight = useStore((s) => s.updateWallHeight)
     const deleteWallSegment = useStore((s) => s.deleteWallSegment)
 
+    const [heightInput, setHeightInput] = useState<string | null>(null)
+
     const [polyId, segIdxStr] = wallId.split('-')
     const segmentIndex = parseInt(segIdxStr, 10)
 
@@ -33,8 +35,6 @@ export function WallSettingsSection({ wallId }: { wallId: string }) {
     const segProps = poly.segmentProps?.[segmentIndex]
     const currentColor = segProps?.color || '#c8c4bc'
     const currentHeight = segProps?.height ?? wallHeight
-
-    const [heightInput, setHeightInput] = useState<string | null>(null)
 
     const commitHeight = (raw: string) => {
         setHeightInput(null)

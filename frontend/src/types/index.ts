@@ -8,11 +8,24 @@ export type FloorTile = {
   metalness?: number
 }
 
+/** A window opening cut into a wall segment. */
+export type WindowOpening = {
+  id: string
+  /** 0–1 along segment length (0 = p1 end, 1 = p2 end), marks the window center. */
+  position: number
+  /** Window width in meters. */
+  width: number
+  /** Window height in meters. */
+  height: number
+  /** Distance from floor to bottom of window (sill height) in meters. */
+  sillHeight: number
+}
+
 export type RoomPolygon = {
   id: string
   points: Vec2[]  // XZ plane
   closed: boolean
-  segmentProps?: Record<number, { color?: string; height?: number }>
+  segmentProps?: Record<number, { color?: string; height?: number; windows?: WindowOpening[] }>
 }
 
 export type PlacedItem = {
@@ -29,6 +42,12 @@ export type PlacedItem = {
   isGenerated?: boolean
   generationTaskId?: string
   floorTile?: FloorTile
+  // --- Window items ---
+  isWindow?: boolean
+  /** Which wall segment this window is embedded in. */
+  wallRef?: { polygonId: string; segmentIndex: number; positionAlongWall: number }
+  /** Physical size of the window opening. */
+  windowSize?: { width: number; height: number; sillHeight: number }
 }
 
 export type PlacedLight = {
@@ -64,6 +83,8 @@ export type LibraryItem = {
   affiliateUrl?: string
   category: string
   floorTile?: FloorTile
+  isWindow?: boolean
+  defaultWindowSize?: { width: number; height: number; sillHeight: number }
 }
 
 export type Space = {
