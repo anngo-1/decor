@@ -4,7 +4,7 @@ import { useStore } from '@/store/useStore'
 import { Plus, Lightbulb, Trash2, Sun } from 'lucide-react'
 import { SliderRow } from './SliderRow'
 
-const ENVIRONMENTS = [
+export const ENVIRONMENTS = [
     { id: 'city', name: 'Studio', color: '#f8fafc' },
     { id: 'apartment', name: 'Warm', color: '#fdf4ff' },
     { id: 'sunset', name: 'Sunset', color: '#ffedd5' },
@@ -21,6 +21,8 @@ export function RoomSettingsSection() {
     const toggleShadows = useStore((s) => s.toggleShadows)
     const ceilingEnabled = useStore((s) => s.ceilingEnabled)
     const toggleCeiling = useStore((s) => s.toggleCeiling)
+    const ceilingTransparent = useStore((s) => s.ceilingTransparent)
+    const toggleCeilingTransparent = useStore((s) => s.toggleCeilingTransparent)
     const sunIntensity = useStore((s) => s.sunIntensity)
     const setLighting = useStore((s) => s.setLighting)
 
@@ -88,9 +90,20 @@ export function RoomSettingsSection() {
                         </div>
                     </div>
                     {ceilingEnabled && (
-                        <p className="text-[9px] text-indigo-400 -mt-1 leading-relaxed">
-                            Sun blocked by ceiling. Use Custom Lights below.
-                        </p>
+                        <div className="flex gap-1.5 mb-1">
+                            <button
+                                onClick={toggleCeilingTransparent}
+                                className={`text-[9px] font-black px-2 py-1 rounded-md border transition-all ${ceilingTransparent
+                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm shadow-indigo-200'
+                                    : 'bg-white border-indigo-200 text-indigo-400 hover:border-indigo-300 hover:text-indigo-600 shadow-sm'
+                                    }`}
+                            >
+                                {ceilingTransparent ? 'Invisible' : 'Visible'}
+                            </button>
+                            <p className="text-[9px] text-indigo-400 leading-relaxed flex items-center">
+                                Sun blocked{ceilingTransparent ? ' (invisible)' : ''}. Use Custom Lights below.
+                            </p>
+                        </div>
                     )}
                     <SliderRow
                         icon={<Sun className="h-4 w-4 text-amber-500" />}

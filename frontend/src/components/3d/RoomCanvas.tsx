@@ -2,9 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useThree, ThreeEvent, useFrame } from '@react-three/fiber'
-import { OrbitControls, PerspectiveCamera, PointerLockControls, Bvh, Environment, Grid } from '@react-three/drei'
-import { EffectComposer, SSAO } from '@react-three/postprocessing'
-import { BlendFunction } from 'postprocessing'
+import { OrbitControls, PerspectiveCamera, PointerLockControls, Bvh, Environment, Grid, Sky } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import * as THREE from 'three'
 import { SceneItems } from './SceneItems'
@@ -14,6 +12,35 @@ import { useStore } from '@/store/useStore'
 import { snapToGrid, snapPoint, snapToPoint, applyAlignmentSnap } from '@/utils/grid'
 import type { Vec2, PlacedLight } from '@/types'
 
+
+
+const SKY_PRESETS: Record<string, { turbidity: number; rayleigh: number; mieCoeff: number; mieG: number; elevation?: number }> = {
+    city: { turbidity: 2, rayleigh: 1.0, mieCoeff: 0.005, mieG: 0.80 },
+    apartment: { turbidity: 5, rayleigh: 2.0, mieCoeff: 0.020, mieG: 0.85 },
+    sunset: { turbidity: 10, rayleigh: 3.0, mieCoeff: 0.080, mieG: 0.98, elevation: 2 },
+    dawn: { turbidity: 6, rayleigh: 2.0, mieCoeff: 0.040, mieG: 0.82, elevation: 5 },
+    night: { turbidity: 20, rayleigh: 0.2, mieCoeff: 0.002, mieG: 0.90, elevation: -4 },
+}
+
+function SceneSky() {
+    const sunAzimuth = useStore((s) => s.sunAzimuth)
+    const sunElevation = useStore((s) => s.sunElevation)
+    const environmentPreset = useStore((s) => s.environmentPreset)
+    const params = SKY_PRESETS[environmentPreset] ?? SKY_PRESETS.city
+    const effectiveElevation = params.elevation ?? sunElevation
+    const phi = (90 - effectiveElevation) * (Math.PI / 180)
+    const theta = sunAzimuth * (Math.PI / 180)
+    return (
+        <Sky
+            distance={450000}
+            sunPosition={[Math.sin(phi) * Math.sin(theta), Math.cos(phi), Math.sin(phi) * Math.cos(theta)]}
+            turbidity={params.turbidity}
+            rayleigh={params.rayleigh}
+            mieCoefficient={params.mieCoeff}
+            mieDirectionalG={params.mieG}
+        />
+    )
+}
 
 function SunGizmo() {
     const showLightingControls = useStore((s) => s.showLightingControls)
@@ -94,59 +121,16 @@ function OrbitEventSuppressor({ orbitRef }: { orbitRef: React.RefObject<OrbitCon
     return null
 }
 
-/**
- * Disables Three.js's per-frame shadow map updates.
- * Re-renders shadow maps for a short burst of frames after any scene-relevant state change.
- * The burst (60 frames) covers async GLB loads that resolve AFTER the state change fires —
- * without it, newly loaded meshes would be missing from the shadow map.
- */
-function ShadowOptimizer() {
-    const { gl } = useThree()
-    const placedItems = useStore((s) => s.placedItems)
-    const placedLights = useStore((s) => s.placedLights)
-    const roomPolygons = useStore((s) => s.roomPolygons)
-    const sunAzimuth = useStore((s) => s.sunAzimuth)
-    const sunElevation = useStore((s) => s.sunElevation)
-    const shadowsEnabled = useStore((s) => s.shadowsEnabled)
-    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
-    const pendingFrames = useRef(60)
-
-    useEffect(() => {
-        gl.shadowMap.autoUpdate = false
-        return () => { gl.shadowMap.autoUpdate = true }
-    }, [gl])
-
-    useEffect(() => {
-        if (shadowsEnabled) pendingFrames.current = 60
-    }, [placedItems, placedLights, roomPolygons, sunAzimuth, sunElevation, shadowsEnabled, ceilingEnabled])
-
-    useFrame(() => {
-        if (pendingFrames.current > 0) {
-            gl.shadowMap.needsUpdate = true
-            pendingFrames.current--
-        }
-    })
-
-    return null
-}
-
 /** Captures screenshots from the renderer and registers them in the store. */
 function ScreenshotManager() {
     const { gl, scene, camera } = useThree()
     const setGetScreenshot = useStore((s) => s.setGetScreenshot)
 
     useEffect(() => {
+        // Sky is part of the scene (Sky mesh), so a plain render captures it correctly.
         const getScreenshot = () => {
-            const originalBackground = scene.background
-
-            scene.background = new THREE.Color('#fcfaff')
             gl.render(scene, camera)
-
-            const dataUrl = gl.domElement.toDataURL('image/jpeg', 0.8)
-
-            scene.background = originalBackground
-
-            return dataUrl
+            return gl.domElement.toDataURL('image/jpeg', 0.8)
         }
         setGetScreenshot(getScreenshot)
         return () => setGetScreenshot(null)
@@ -476,7 +460,7 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
                 // Screenshots still work: ScreenshotManager calls gl.render()
                 // then toDataURL() synchronously before the frame is presented.
             }}
-            style={{ background: '#fcfaff' }}
+            style={{ background: '#d0e8ff' }}
             onPointerMissed={() => {
                 if (activeTool === 'select') {
                     setSelection(null)
@@ -488,8 +472,9 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
             <SceneLoader />
             <DragDropHandler />
             <ScreenshotManager />
-            <ShadowOptimizer />
             <SunGizmo />
+            <SceneSky />
+
 
             <Suspense fallback={<ambientLight intensity={0.5} />}>
                 <AmbientLightRig />
@@ -499,13 +484,13 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
             <PlacedLights orbitRef={orbitRef} />
 
             {/* Floor background — sits behind the grid so transparent grid cells
-                show this color instead of the dark HDRI environment sphere.
+                show this neutral surface instead of the sky at the horizon.
                 200×200 keeps all corners within the camera far=100m frustum,
                 preventing depth-clamping artifacts in the SSAO pass. */}
             {!readonly && (
                 <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, 0]}>
                     <planeGeometry args={[200, 200]} />
-                    <meshBasicMaterial color="#fcfaff" depthWrite={false} />
+                    <meshBasicMaterial color="#ffffff" depthWrite={false} toneMapped={false} />
                 </mesh>
             )}
 
@@ -526,12 +511,7 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
                 />
             )}
 
-            {shadowsEnabled && (
-                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-                    <planeGeometry args={[200, 200]} />
-                    <shadowMaterial transparent opacity={0.3} depthWrite={false} />
-                </mesh>
-            )}
+
 
             <Bvh firstHitOnly>
                 <WallSystem readonly={readonly} />
@@ -566,24 +546,8 @@ export function RoomCanvas({ readonly = false }: { readonly?: boolean }) {
                 </>
             )}
 
-            {/* SSAO — screen-space ambient occlusion. Adds soft darkening in corners,
-                under furniture, and along wall-floor joints. This is the primary reason
-                Blender/real-life renders look richer than raw WebGL. Only active when
-                the user has shadows enabled. */}
-            {shadowsEnabled && (
-                <EffectComposer enableNormalPass multisampling={0}>
-                    <SSAO
-                        blendFunction={BlendFunction.MULTIPLY}
-                        samples={16}
-                        radius={0.1}
-                        intensity={1.5}
-                        luminanceInfluence={0.6}
-                        bias={0.05}
-                        worldDistanceThreshold={10}
-                        worldDistanceFalloff={5}
-                    />
-                </EffectComposer>
-            )}
+
+
         </Canvas>
     )
 }
@@ -675,13 +639,6 @@ function SunLight() {
     const sunAzimuth = useStore((s) => s.sunAzimuth)
     const sunElevation = useStore((s) => s.sunElevation)
     const sunIntensity = useStore((s) => s.sunIntensity)
-    const shadowsEnabled = useStore((s) => s.shadowsEnabled)
-    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
-    
-    // The ceiling geometry is now an extruded block (0.2m thick), which robustly
-    // blocks the sun rays from leaking through. Sunbeams can now naturally stream 
-    // through windows without needing artificial attenuation.
-    const effectiveIntensity = sunIntensity
 
     const phi = (90 - sunElevation) * (Math.PI / 180)
     const theta = sunAzimuth * (Math.PI / 180)
@@ -693,18 +650,7 @@ function SunLight() {
     return (
         <directionalLight
             position={[x, y, z]}
-            intensity={effectiveIntensity}
-            castShadow={shadowsEnabled && !ceilingEnabled}
-            shadow-mapSize={[2048, 2048]}
-            shadow-camera-near={0.1}
-            shadow-camera-far={100}
-            shadow-camera-left={-20}
-            shadow-camera-right={20}
-            shadow-camera-top={20}
-            shadow-camera-bottom={-20}
-            shadow-bias={-0.0001}
-            shadow-normalBias={0.05}
-            shadow-radius={2}
+            intensity={sunIntensity}
         />
     )
 }
@@ -717,14 +663,11 @@ function AmbientLightRig() {
         <>
             {/* Boost ambient when ceiling blocks sun so the room stays lit by default.
                 Users are expected to place Custom Lights for interior illumination. */}
-            <ambientLight intensity={ceilingEnabled ? 0.6 : 0.2} />
-            {/* background shows the HDRI as visible sky through windows and above walls.
-                Reduce backgroundIntensity when ceiling is on — less HDRI bleed needed. */}
+            <ambientLight intensity={ceilingEnabled ? 0.3 : 0.07} />
+            {/* HDRI used only for IBL reflections — background is driven by the
+                sky color derived from the active environment preset instead. */}
             <Environment
                 preset={environmentPreset as any}
-                background
-                backgroundBlurriness={0.7}
-                backgroundIntensity={ceilingEnabled ? 0.15 : 0.5}
             />
         </>
     )
@@ -742,6 +685,7 @@ function PlacedLightMesh({
 }) {
     const setSelection = useStore((s) => s.setSelection)
     const showLightingControls = useStore((s) => s.showLightingControls)
+    const shadowsEnabled = useStore((s) => s.shadowsEnabled)
     const { gl } = useThree()
 
     return (
@@ -783,14 +727,16 @@ function PlacedLightMesh({
                 </>
             )}
 
-            {/* Interior decorative lights (lamps) don't cast hard cube-map shadows
-                in real life — they emit soft warm light absorbed by the room.
-                Directional sun handles hard shadows; SSAO handles contact shadows. */}
             <pointLight
                 distance={light.distance}
                 intensity={light.intensity}
                 color={light.color}
                 decay={2}
+                castShadow={shadowsEnabled}
+                shadow-mapSize={[512, 512]}
+                shadow-camera-near={0.1}
+                shadow-camera-far={light.distance}
+                shadow-bias={-0.005}
             />
         </group>
     )

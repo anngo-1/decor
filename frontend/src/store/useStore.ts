@@ -95,6 +95,7 @@ interface StoreState {
     draggedLibraryItem: LibraryItem | null
     shadowsEnabled: boolean
     ceilingEnabled: boolean
+    ceilingTransparent: boolean
     isPointerLocked: boolean
     cinematicMode: boolean
     sunAzimuth: number
@@ -163,6 +164,7 @@ interface StoreState {
     toggleSidebar: () => void
     toggleShadows: () => void
     toggleCeiling: () => void
+    toggleCeilingTransparent: () => void
     togglePointerLock: () => void
     toggleCinematicMode: () => void
     setLighting: (lighting: { azimuth?: number; elevation?: number; intensity?: number }) => void
@@ -228,11 +230,12 @@ export const useStore = create<StoreState>()(
         hoverPoint: null,
         shadowsEnabled: true,
         ceilingEnabled: false,
+        ceilingTransparent: true,
         isPointerLocked: false,
         cinematicMode: false,
         sunAzimuth: 45,
         sunElevation: 45,
-        sunIntensity: 1.5,
+        sunIntensity: 0.8,
         showLightingControls: false,
         environmentPreset: 'city',
         measurePoints: null,
@@ -613,6 +616,7 @@ export const useStore = create<StoreState>()(
         toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
         toggleShadows: () => set((s) => ({ shadowsEnabled: !s.shadowsEnabled })),
         toggleCeiling: () => set((s) => ({ ceilingEnabled: !s.ceilingEnabled })),
+        toggleCeilingTransparent: () => set((s) => ({ ceilingTransparent: !s.ceilingTransparent })),
         togglePointerLock: () => set((s) => ({ isPointerLocked: !s.isPointerLocked })),
         toggleCinematicMode: () => set((s) => ({ cinematicMode: !s.cinematicMode })),
         setLighting: (lighting) => set((s) => ({

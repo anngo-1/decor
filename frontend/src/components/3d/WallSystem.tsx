@@ -267,7 +267,7 @@ function PolygonFloor({ points }: { points: Vec2[] }) {
 
     return (
         <mesh geometry={floorGeo} position={[0, 0.002, 0]} receiveShadow>
-            <meshStandardMaterial color="#f5f3ef" roughness={0.9} metalness={0.0} side={THREE.DoubleSide} />
+            <meshStandardMaterial color="#ffffff" roughness={0.9} metalness={0.0} toneMapped={false} />
         </mesh>
     )
 }
@@ -276,17 +276,28 @@ export function RoomCeilingAndFloor() {
     const roomPolygons = useStore((s) => s.roomPolygons)
     const wallHeight = useStore((s) => s.wallHeight)
     const ceilingEnabled = useStore((s) => s.ceilingEnabled)
+    const ceilingTransparent = useStore((s) => s.ceilingTransparent)
 
     if (!ceilingEnabled) return null
 
     return (
         <group>
             {/* Global ceiling — large plane at wallHeight, visible from below.
-                Sun shadow blocking is handled by disabling castShadow on the directional light. */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, wallHeight, 0]}>
-                <planeGeometry args={[200, 200]} />
-                <meshStandardMaterial color="#e8e6e1" roughness={0.85} metalness={0.02} side={THREE.BackSide} />
-            </mesh>
+                When transparent, we skip rendering entirely: opacity=0 meshes still
+                write to the depth buffer and SSAO processes their geometry, causing
+                a visible darkening band at the ceiling plane when orbiting.
+                Shadow blocking is handled by disabling castShadow on the directional light. */}
+            {!ceilingTransparent && (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, wallHeight, 0]}>
+                    <planeGeometry args={[200, 200]} />
+                    <meshStandardMaterial
+                        color="#e8e6e1"
+                        roughness={0.85}
+                        metalness={0.02}
+                        side={THREE.BackSide}
+                    />
+                </mesh>
+            )}
             {/* Per-polygon floor overlay — bounded to the room footprint */}
             {roomPolygons
                 .filter((poly) => poly.closed && poly.points.length >= 3)
