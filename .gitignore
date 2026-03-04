@@ -11,6 +11,9 @@ out/
 build/
 dist/
 
+# Next.js auto-generated (do not commit)
+frontend/next-env.d.ts
+
 # Environment
 .env
 .env.local
