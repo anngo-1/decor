@@ -1,19 +1,20 @@
 "use client"
 
 import Link from "next/link"
-import { Sparkles, Plus, Play, Hammer } from "lucide-react"
+import { Sparkles, Play, Hammer } from "lucide-react"
 import { motion } from "framer-motion"
 import { usePathname } from "next/navigation"
 
 interface TopNavProps {
     isHome?: boolean
+    solid?: boolean
 }
 
-export function TopNav({ isHome = false }: TopNavProps) {
+export function TopNav({ isHome = false, solid = false }: TopNavProps) {
     const pathname = usePathname()
 
     return (
-        <nav className="relative z-50 flex items-center justify-between px-6 py-6 md:px-12 backdrop-blur-md border-b border-indigo-100/50">
+        <nav className={`relative z-50 flex items-center justify-between px-6 py-6 md:px-12 border-b ${solid ? 'bg-[#fcfaff] border-indigo-100' : 'backdrop-blur-md border-indigo-100/50'}`}>
             <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}

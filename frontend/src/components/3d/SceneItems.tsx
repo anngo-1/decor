@@ -1,12 +1,21 @@
 'use client'
 
-import { useRef, useEffect, useState, useMemo, memo, Suspense } from 'react'
+import { useRef, useEffect, useState, useMemo, useCallback, memo, Suspense } from 'react'
 import * as THREE from 'three'
 import { useGLTF, useCursor } from '@react-three/drei'
 import { ThreeEvent, useThree } from '@react-three/fiber'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { useStore } from '@/store/useStore'
 import type { PlacedItem, Vec2 } from '@/types'
 import { snapToGrid } from '@/utils/grid'
+import { isLowPerfDevice as detectLowPerfDevice } from '@/engine/runtime/deviceProfile'
+import { clearModelTemplate, getCachedModelUrls, getOrCreateModelTemplate, pruneModelTemplateCache } from '@/engine/assets/modelCache'
+import { beginPointerDrag } from '@/engine/runtime/interactions/drag'
+
+// Enable Draco mesh decompression — 5-10x smaller GLB downloads.
+// Uses Google-hosted WASM decoder (no need to self-host files).
+// Models without Draco compression still load normally.
+useGLTF.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/')
 
 // --- Window geometry constants (matching wall thickness) ---
 const WALL_T = 0.114
@@ -18,18 +27,40 @@ const WIN_MULLION_W = 0.035
  * Standalone window geometry, centered at local origin.
  * X = thickness axis, Y = up/down, Z = along wall.
  */
-function WindowGeometry({ width, height, opacity = 1 }: { width: number; height: number; opacity?: number }) {
+// Shared window materials — avoids creating 7 material instances per window per render
+const sharedWindowFrameMat = new THREE.MeshStandardMaterial({ color: '#c9b99a', roughness: 0.65, metalness: 0.05 })
+const sharedWindowGlassMat = new THREE.MeshStandardMaterial({
+    color: '#b8d4e8', transparent: true, opacity: 0.22, roughness: 0.04, metalness: 0.12,
+    side: THREE.DoubleSide, depthWrite: false,
+})
+// Shared box geometry for all window frame parts
+const sharedBoxGeo = new THREE.BoxGeometry(1, 1, 1)
+
+const WindowGeometry = memo(function WindowGeometry({ width, height, opacity = 1, castShadow = true }: { width: number; height: number; opacity?: number; castShadow?: boolean }) {
     const innerW = width - WIN_FRAME_W * 2
     const innerH = height - WIN_FRAME_W * 2
-    const frameColor = opacity < 1 ? '#a09080' : '#c9b99a'
-    const transparent = opacity < 1
+    const isPreview = opacity < 1
+    const castFrameShadow = !isPreview && castShadow
+    const receiveFrameShadow = !isPreview
 
-    // The glass has depthWrite=false so objects behind it (grid, lights) render
-    // correctly. But the SSAO NormalPass overrides all materials with
-    // MeshNormalMaterial which defaults to depthWrite=true, making the glass
-    // appear as a solid opaque slab and turning black under SSAO.
-    // Fix: suppress depth+color writes on the override material for this mesh
-    // only, so the NormalPass treats the glass as non-existent.
+    // For previews, use cloned transparent materials; for placed windows, share
+    const frameMat = useMemo(() => {
+        if (!isPreview) return sharedWindowFrameMat
+        const m = sharedWindowFrameMat.clone()
+        m.transparent = true
+        m.opacity = opacity
+        m.color.set('#a09080')
+        return m
+    }, [isPreview, opacity])
+
+    const glassMat = useMemo(() => {
+        if (!isPreview) return sharedWindowGlassMat
+        const m = sharedWindowGlassMat.clone()
+        m.opacity = opacity * 0.22
+        return m
+    }, [isPreview, opacity])
+
+    // Suppress SSAO NormalPass on glass so it doesn't render as opaque slab
     const glassRef = useRef<THREE.Mesh>(null)
     useEffect(() => {
         const mesh = glassRef.current
@@ -55,56 +86,25 @@ function WindowGeometry({ width, height, opacity = 1 }: { width: number; height:
     return (
         <group>
             {/* Outer frame — top */}
-            <mesh position={[0, height / 2 - WIN_FRAME_W / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[WIN_FRAME_D, WIN_FRAME_W, width]} />
-                <meshStandardMaterial color={frameColor} roughness={0.65} metalness={0.05} transparent={transparent} opacity={opacity} />
-            </mesh>
+            <mesh geometry={sharedBoxGeo} material={frameMat} position={[0, height / 2 - WIN_FRAME_W / 2, 0]} scale={[WIN_FRAME_D, WIN_FRAME_W, width]} castShadow={castFrameShadow} receiveShadow={receiveFrameShadow} />
             {/* Outer frame — bottom */}
-            <mesh position={[0, -height / 2 + WIN_FRAME_W / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[WIN_FRAME_D, WIN_FRAME_W, width]} />
-                <meshStandardMaterial color={frameColor} roughness={0.65} metalness={0.05} transparent={transparent} opacity={opacity} />
-            </mesh>
+            <mesh geometry={sharedBoxGeo} material={frameMat} position={[0, -height / 2 + WIN_FRAME_W / 2, 0]} scale={[WIN_FRAME_D, WIN_FRAME_W, width]} castShadow={castFrameShadow} receiveShadow={receiveFrameShadow} />
             {/* Outer frame — left */}
-            <mesh position={[0, 0, -width / 2 + WIN_FRAME_W / 2]} castShadow receiveShadow>
-                <boxGeometry args={[WIN_FRAME_D, innerH, WIN_FRAME_W]} />
-                <meshStandardMaterial color={frameColor} roughness={0.65} metalness={0.05} transparent={transparent} opacity={opacity} />
-            </mesh>
+            <mesh geometry={sharedBoxGeo} material={frameMat} position={[0, 0, -width / 2 + WIN_FRAME_W / 2]} scale={[WIN_FRAME_D, innerH, WIN_FRAME_W]} castShadow={castFrameShadow} receiveShadow={receiveFrameShadow} />
             {/* Outer frame — right */}
-            <mesh position={[0, 0, width / 2 - WIN_FRAME_W / 2]} castShadow receiveShadow>
-                <boxGeometry args={[WIN_FRAME_D, innerH, WIN_FRAME_W]} />
-                <meshStandardMaterial color={frameColor} roughness={0.65} metalness={0.05} transparent={transparent} opacity={opacity} />
-            </mesh>
+            <mesh geometry={sharedBoxGeo} material={frameMat} position={[0, 0, width / 2 - WIN_FRAME_W / 2]} scale={[WIN_FRAME_D, innerH, WIN_FRAME_W]} castShadow={castFrameShadow} receiveShadow={receiveFrameShadow} />
             {/* Cross — horizontal mullion */}
-            <mesh castShadow receiveShadow>
-                <boxGeometry args={[WIN_FRAME_D * 0.9, WIN_MULLION_W, innerW]} />
-                <meshStandardMaterial color={frameColor} roughness={0.65} metalness={0.05} transparent={transparent} opacity={opacity} />
-            </mesh>
+            <mesh geometry={sharedBoxGeo} material={frameMat} scale={[WIN_FRAME_D * 0.9, WIN_MULLION_W, innerW]} castShadow={castFrameShadow} receiveShadow={receiveFrameShadow} />
             {/* Cross — vertical mullion */}
-            <mesh castShadow receiveShadow>
-                <boxGeometry args={[WIN_FRAME_D * 0.9, innerH, WIN_MULLION_W]} />
-                <meshStandardMaterial color={frameColor} roughness={0.65} metalness={0.05} transparent={transparent} opacity={opacity} />
-            </mesh>
-            {/* Glass — depthWrite=false so geometry behind it still renders.
-                The ref+callbacks above prevent SSAO NormalPass from seeing this
-                as an opaque solid. */}
-            <mesh ref={glassRef} castShadow={false} receiveShadow={false}>
-                <boxGeometry args={[0.006, innerH, innerW]} />
-                <meshStandardMaterial
-                    color="#b8d4e8"
-                    transparent
-                    opacity={opacity * 0.22}
-                    roughness={0.04}
-                    metalness={0.12}
-                    side={THREE.DoubleSide}
-                    depthWrite={false}
-                />
-            </mesh>
+            <mesh geometry={sharedBoxGeo} material={frameMat} scale={[WIN_FRAME_D * 0.9, innerH, WIN_MULLION_W]} castShadow={castFrameShadow} receiveShadow={receiveFrameShadow} />
+            {/* Glass */}
+            <mesh ref={glassRef} geometry={sharedBoxGeo} material={glassMat} scale={[0.006, innerH, innerW]} receiveShadow={false} castShadow={false} />
         </group>
     )
-}
+})
 
 /** A placed window item — rendered as geometry on the wall face, draggable along the wall. */
-function SceneWindowItem({ item, isSelected, onClick }: { item: PlacedItem; isSelected: boolean; onClick?: () => void }) {
+const SceneWindowItem = memo(function SceneWindowItem({ item, isSelected, onClick, castShadow = true }: { item: PlacedItem; isSelected: boolean; onClick?: () => void; castShadow?: boolean }) {
     const activeTool = useStore((s) => s.activeTool)
     const roomPolygons = useStore((s) => s.roomPolygons)
     const updateWindowPlacement = useStore((s) => s.updateWindowPlacement)
@@ -146,22 +146,22 @@ function SceneWindowItem({ item, isSelected, onClick }: { item: PlacedItem; isSe
 
         useStore.getState().commitHistory()
         setIsDragging(true)
-        if (controls) (controls as any).enabled = false
+        setOrbitEnabled(controls, false)
 
-        const raycaster = new THREE.Raycaster()
-        // Horizontal plane at window center height — project mouse onto it, then onto wall axis
-        const hitPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -item.position[1])
-        const hitVec = new THREE.Vector3()
+        // Reuse pre-allocated objects — set plane height for this drag session
+        _dragPlane.constant = -item.position[1]
         const canvas = gl.domElement
         const halfMargin = (w / 2) / segLen + 0.01
 
         const onMove = (ev: PointerEvent) => {
             const rect = canvas.getBoundingClientRect()
-            const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1
-            const ndcY = -((ev.clientY - rect.top) / rect.height) * 2 + 1
-            raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
-            if (raycaster.ray.intersectPlane(hitPlane, hitVec)) {
-                const dot = (hitVec.x - p1.x) * (dx / segLen) + (hitVec.z - p1.z) * (dz / segLen)
+            _dragNdc.set(
+                ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+                -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+            )
+            _dragRaycaster.setFromCamera(_dragNdc, camera)
+            if (_dragRaycaster.ray.intersectPlane(_dragPlane, _dragHit)) {
+                const dot = (_dragHit.x - p1.x) * (dx / segLen) + (_dragHit.z - p1.z) * (dz / segLen)
                 const t = Math.max(halfMargin, Math.min(1 - halfMargin, dot / segLen))
                 updateWindowPlacement(item.id, t, true)
             }
@@ -169,19 +169,16 @@ function SceneWindowItem({ item, isSelected, onClick }: { item: PlacedItem; isSe
 
         const onUp = () => {
             setIsDragging(false)
-            if (controls) (controls as any).enabled = true
+            setOrbitEnabled(controls, true)
             useStore.getState().commitHistory()
-            canvas.removeEventListener('pointermove', onMove)
-            window.removeEventListener('pointerup', onUp)
         }
 
-        canvas.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
+        beginPointerDrag({ canvas, onMove, onEnd: onUp })
     }
 
     return (
         <group position={item.position} rotation={item.rotation}>
-            <WindowGeometry width={w} height={h} />
+            <WindowGeometry width={w} height={h} castShadow={castShadow} />
 
             {/* Hit target — wider than glass so easier to click/grab */}
             {activeTool === 'select' && (
@@ -204,7 +201,7 @@ function SceneWindowItem({ item, isSelected, onClick }: { item: PlacedItem; isSe
             )}
         </group>
     )
-}
+})
 
 /** Preview window shown while dragging a window item over a wall. */
 function WindowDragPreview() {
@@ -221,65 +218,19 @@ function WindowDragPreview() {
     )
 }
 
-const TARGET_SIZE = 1.5
+const MODEL_TEMPLATE_CACHE_LIMIT = 36
+const MODEL_UNLOAD_DELAY_MS = 15000
 
-const _box = new THREE.Box3()
-const _v1 = new THREE.Vector3()
+// Pre-allocated objects for drag raycasting — avoids GC pressure during pointermove
+const _dragRaycaster = new THREE.Raycaster()
+const _dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+const _dragHit = new THREE.Vector3()
+const _dragNdc = new THREE.Vector2()
 
-// Global cache to share converted MeshStandardMaterials across all instances of the same model
-const materialCache = new Map<string, THREE.Material>()
-
-// Helper to compute a bounding box from actual visible meshes
-function getActualBoundingBox(object: THREE.Object3D): THREE.Box3 | null {
-    const meshBoxes: THREE.Box3[] = []
-    
-    object.updateMatrixWorld(true)
-    
-    object.traverse((child) => {
-        const mesh = child as THREE.Mesh
-        if (mesh.isMesh && mesh.geometry && mesh.visible) {
-            mesh.geometry.computeBoundingBox()
-            const geomBox = mesh.geometry.boundingBox
-            if (geomBox) {
-                const worldBox = geomBox.clone()
-                worldBox.applyMatrix4(mesh.matrixWorld)
-                meshBoxes.push(worldBox)
-            }
-        }
-    })
-    
-    if (meshBoxes.length === 0) return null
-    
-    const combinedBox = new THREE.Box3()
-    for (const box of meshBoxes) {
-        combinedBox.union(box)
-    }
-    return combinedBox
-}
-
-// Compute tighter bounding box from actual meshes only, ignoring empty group nodes
-function computeTightBounds(object: THREE.Object3D, targetSize = TARGET_SIZE) {
-    const combinedBox = getActualBoundingBox(object)
-    if (!combinedBox) return null
-    
-    const size = combinedBox.getSize(_v1)
-    const maxDim = Math.max(size.x, size.y, size.z)
-    if (maxDim === 0) return null
-    
-    const scaleFactor = targetSize / maxDim
-    const center = combinedBox.getCenter(_v1)
-    
-    return { scale: scaleFactor, centerX: center.x, centerZ: center.z, minY: combinedBox.min.y }
-}
-
-function normalizeBoundingBox(object: THREE.Object3D, targetSize = TARGET_SIZE) {
-    const tight = computeTightBounds(object, targetSize)
-    if (!tight) return
-    
-    object.scale.setScalar(tight.scale)
-    object.position.x -= tight.centerX
-    object.position.z -= tight.centerZ
-    object.position.y -= tight.minY
+function setOrbitEnabled(controls: unknown, enabled: boolean) {
+    const orbit = controls as OrbitControlsImpl | null | undefined
+    if (!orbit) return
+    orbit.enabled = enabled
 }
 
 interface SceneModelProps {
@@ -287,14 +238,16 @@ interface SceneModelProps {
     isSelected: boolean
     onClick?: () => void
     interactive?: boolean
+    castShadow?: boolean
+    onReady?: (id: string) => void
 }
 
-const SceneModel = memo(function SceneModel({ item, isSelected, onClick, interactive = true }: SceneModelProps) {
+const SceneModel = memo(function SceneModel({ item, isSelected, onClick, interactive = true, castShadow = false, onReady }: SceneModelProps) {
     const { scene } = useGLTF(item.modelUrl)
     const updateItemDimensions = useStore((s) => s.updateItemDimensions)
     const updateItemPosition = useStore((s) => s.updateItemPosition)
     const activeTool = useStore((s) => s.activeTool)
-    const { controls, gl, camera } = useThree()
+    const { controls, gl, camera, invalidate } = useThree()
 
     const [isDragging, setIsDragging] = useState(false)
     const [hovered, setHovered] = useState(false)
@@ -309,121 +262,69 @@ const SceneModel = memo(function SceneModel({ item, isSelected, onClick, interac
         }
     }, [item.position, isDragging])
 
-    useCursor((hovered || isDragging) && interactive && activeTool === 'select', (isDragging ? 'grabbing' : 'grab') as any, 'auto')
+    useCursor((hovered || isDragging) && interactive && activeTool === 'select', isDragging ? 'grabbing' : 'grab', 'auto')
 
+    const modelTemplate = useMemo(() => getOrCreateModelTemplate(item.modelUrl, scene), [item.modelUrl, scene])
     const normalizedScene = useMemo(() => {
-        const clone = scene.clone()
+        const clone = modelTemplate.template.clone(true)
         clone.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-                const mesh = child as THREE.Mesh
-                mesh.castShadow = true
-                mesh.receiveShadow = true
-                if (mesh.material) {
-                    const convertMaterial = (m: THREE.Material) => {
-                        // Check cache first using the original material's UUID
-                        if (materialCache.has(m.uuid)) {
-                            return materialCache.get(m.uuid)!
-                        }
-
-                        let newMat = m.clone()
-                        if ((newMat as any).type === 'MeshBasicMaterial') {
-                            const basic = newMat as THREE.MeshBasicMaterial
-                            const standard = new THREE.MeshStandardMaterial({
-                                color: basic.color,
-                                map: basic.map,
-                                transparent: basic.transparent,
-                                opacity: basic.opacity,
-                                side: basic.side,
-                                alphaTest: basic.alphaTest,
-                                roughness: 0.8,
-                                metalness: 0.05,
-                            })
-                            // Copy vertex colors if they exist
-                            if (basic.vertexColors) {
-                                standard.vertexColors = basic.vertexColors
-                            }
-                            newMat = standard
-                        }
-                        materialCache.set(m.uuid, newMat)
-                        return newMat
-                    }
-
-                    if (Array.isArray(mesh.material)) {
-                        mesh.material = mesh.material.map(m => convertMaterial(m).clone())
-                    } else {
-                        mesh.material = convertMaterial(mesh.material).clone()
-                    }
-
-                    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-                    mats.forEach(matClone => {
-                        matClone.userData.originalTransparent = matClone.transparent
-                        matClone.userData.originalOpacity = matClone.opacity
-                        matClone.needsUpdate = true
-                    })
-                }
-            }
+            if (!(child as THREE.Mesh).isMesh) return
+            const mesh = child as THREE.Mesh
+            mesh.castShadow = castShadow
+            mesh.receiveShadow = false
         })
-
-        // Normalize all items to fit within TARGET_SIZE for consistent hitboxes
-        normalizeBoundingBox(clone, TARGET_SIZE)
-
         return clone
-    }, [scene, item.isGenerated])
+    }, [modelTemplate, castShadow])
 
     useEffect(() => {
         // Only show transparency for drag previews (non-interactive), not for selected items
         const shouldBeTransparent = !interactive && !item.isGenerated
+        if (!shouldBeTransparent) return
+
+        // Clone materials for this preview instance so we don't mutate shared materials
+        const clonedMats: THREE.Material[] = []
         normalizedScene.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
                 const mesh = child as THREE.Mesh
-                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material as THREE.Material]
-
-                mats.forEach(mat => {
-                    if (!mat) return
-                    const targetTransparent = shouldBeTransparent ? true : (mat.userData.originalTransparent ?? false)
-                    const targetOpacity = shouldBeTransparent ? 0.4 : (mat.userData.originalOpacity ?? 1.0)
-
-                    if (mat.transparent !== targetTransparent || mat.opacity !== targetOpacity) {
-                        mat.transparent = targetTransparent
-                        mat.opacity = targetOpacity
-                        mat.needsUpdate = true
-                    }
-                })
+                if (Array.isArray(mesh.material)) {
+                    mesh.material = mesh.material.map(m => {
+                        const c = m.clone()
+                        c.transparent = true
+                        c.opacity = 0.4
+                        c.needsUpdate = true
+                        clonedMats.push(c)
+                        return c
+                    })
+                } else {
+                    const c = mesh.material.clone()
+                    c.transparent = true
+                    c.opacity = 0.4
+                    c.needsUpdate = true
+                    clonedMats.push(c)
+                    mesh.material = c
+                }
             }
         })
+        return () => { clonedMats.forEach(m => m.dispose()) }
     }, [normalizedScene, interactive, item.isGenerated])
 
     useEffect(() => {
-        // Calculate tighter dimensions from actual meshes only
-        // Detach from parent temporarily to avoid double-scaling and double-rotation.
-        // We want the local unscaled, unrotated dimensions of the normalized scene.
-        const originalParent = normalizedScene.parent
-        normalizedScene.parent = null
-        
-        const combinedBox = getActualBoundingBox(normalizedScene)
-        
-        // Restore parent
-        normalizedScene.parent = originalParent
-        
-        let dims: [number, number, number] = [1, 1, 1]
-        
-        if (combinedBox) {
-            const size = new THREE.Vector3()
-            combinedBox.getSize(size)
-            dims = [size.x * item.scale, size.y * item.scale, size.z * item.scale]
-        }
+        const base = modelTemplate.dimensions
+        const dims: [number, number, number] = [base[0] * item.scale, base[1] * item.scale, base[2] * item.scale]
 
-        if (!item.dimensions ||
+        if (
+            !item.dimensions ||
             Math.abs(item.dimensions[0] - dims[0]) > 0.001 ||
             Math.abs(item.dimensions[1] - dims[1]) > 0.001 ||
-            Math.abs(item.dimensions[2] - dims[2]) > 0.001) {
-
-            const timeoutId = setTimeout(() => {
-                updateItemDimensions(item.id, dims)
-            }, 0)
-            return () => clearTimeout(timeoutId)
+            Math.abs(item.dimensions[2] - dims[2]) > 0.001
+        ) {
+            updateItemDimensions(item.id, dims)
         }
-    }, [normalizedScene, item.scale, item.id, item.dimensions, updateItemDimensions])
+    }, [modelTemplate, item.scale, item.id, item.dimensions, updateItemDimensions])
+
+    useEffect(() => {
+        onReady?.(item.id)
+    }, [item.id, onReady])
 
     const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
         if (!interactive) return
@@ -438,41 +339,39 @@ const SceneModel = memo(function SceneModel({ item, isSelected, onClick, interac
         useStore.getState().commitHistory()
         dragPosRef.current = item.position
         setIsDragging(true)
-        if (controls) (controls as any).enabled = false
+        setOrbitEnabled(controls, false)
 
-        // Raycast against a fixed mathematical ground plane — no BVH, no R3F event overhead
-        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-        const raycaster = new THREE.Raycaster()
-        const hit = new THREE.Vector3()
+        // Reuse pre-allocated objects — reset plane to ground level
+        _dragPlane.constant = 0
         const canvas = gl.domElement
 
         const onMove = (ev: PointerEvent) => {
             const rect = canvas.getBoundingClientRect()
-            const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1
-            const ndcY = -((ev.clientY - rect.top) / rect.height) * 2 + 1
-            raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
-            if (raycaster.ray.intersectPlane(groundPlane, hit)) {
-                const newX = snapToGrid(hit.x)
-                const newZ = snapToGrid(hit.z)
+            _dragNdc.set(
+                ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+                -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+            )
+            _dragRaycaster.setFromCamera(_dragNdc, camera)
+            if (_dragRaycaster.ray.intersectPlane(_dragPlane, _dragHit)) {
+                const newX = snapToGrid(_dragHit.x)
+                const newZ = snapToGrid(_dragHit.z)
                 if (newX !== dragPosRef.current[0] || newZ !== dragPosRef.current[2]) {
                     dragPosRef.current = [newX, dragPosRef.current[1], newZ]
                     if (groupRef.current) {
                         groupRef.current.position.set(newX, dragPosRef.current[1], newZ)
                     }
+                    invalidate()
                 }
             }
         }
 
         const onUp = () => {
             setIsDragging(false)
-            if (controls) (controls as any).enabled = true
+            setOrbitEnabled(controls, true)
             updateItemPosition(item.id, dragPosRef.current, true)
-            canvas.removeEventListener('pointermove', onMove)
-            window.removeEventListener('pointerup', onUp)
         }
 
-        canvas.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
+        beginPointerDrag({ canvas, onMove, onEnd: onUp })
     }
 
     const selectionRingRadius = item.dimensions
@@ -504,7 +403,7 @@ const SceneModel = memo(function SceneModel({ item, isSelected, onClick, interac
 
             {isSelected && interactive && (
                 <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
-                    <ringGeometry args={[selectionRingRadius - 0.05, selectionRingRadius, 64]} />
+                    <ringGeometry args={[selectionRingRadius - 0.05, selectionRingRadius, 40]} />
                     <meshBasicMaterial color="#6366f1" transparent opacity={0.8} side={THREE.DoubleSide} depthWrite={false} />
                 </mesh>
             )}
@@ -539,9 +438,162 @@ function DragPreview() {
 
 export function SceneItems({ readonly = false }: { readonly?: boolean }) {
     const placedItems = useStore((s) => s.placedItems)
+    const placedLights = useStore((s) => s.placedLights)
+    const draggedLibraryItem = useStore((s) => s.draggedLibraryItem)
     const selection = useStore((s) => s.selection)
     const setSelection = useStore((s) => s.setSelection)
     const activeTool = useStore((s) => s.activeTool)
+    const shadowsEnabled = useStore((s) => s.shadowsEnabled)
+    const setIsLoading = useStore((s) => s.setIsLoading)
+    const unloadTimersRef = useRef<Map<string, number>>(new Map())
+    const activeModelUrlsRef = useRef<Set<string>>(new Set())
+    const readyModelIdsRef = useRef<Set<string>>(new Set())
+    const [readyModelsVersion, setReadyModelsVersion] = useState(0)
+
+    const [isLowPerfDevice] = useState(detectLowPerfDevice)
+
+    const modelItems = useMemo(() => placedItems.filter((it) => !it.isWindow), [placedItems])
+
+    const handleModelReady = useCallback((id: string) => {
+        if (readyModelIdsRef.current.has(id)) return
+        readyModelIdsRef.current.add(id)
+        setReadyModelsVersion((v) => v + 1)
+    }, [])
+
+    useEffect(() => {
+        if (modelItems.length === 0) {
+            setIsLoading(false)
+            return
+        }
+        for (const item of modelItems) {
+            if (!readyModelIdsRef.current.has(item.id)) return
+        }
+        setIsLoading(false)
+    }, [modelItems, readyModelsVersion, setIsLoading])
+    const activeModelUrls = useMemo(() => {
+        const urls = new Set<string>()
+        for (const item of modelItems) {
+            if (item.modelUrl) urls.add(item.modelUrl)
+        }
+        if (draggedLibraryItem && !draggedLibraryItem.isWindow && draggedLibraryItem.modelUrl) {
+            urls.add(draggedLibraryItem.modelUrl)
+        }
+        return urls
+    }, [modelItems, draggedLibraryItem])
+
+    useEffect(() => {
+        activeModelUrlsRef.current = activeModelUrls
+    }, [activeModelUrls])
+
+    useEffect(() => {
+        pruneModelTemplateCache(activeModelUrls, MODEL_TEMPLATE_CACHE_LIMIT)
+
+        for (const [url, timerId] of unloadTimersRef.current.entries()) {
+            if (activeModelUrls.has(url)) {
+                window.clearTimeout(timerId)
+                unloadTimersRef.current.delete(url)
+            }
+        }
+
+        for (const url of getCachedModelUrls()) {
+            if (activeModelUrls.has(url)) continue
+            if (unloadTimersRef.current.has(url)) continue
+            const timerId = window.setTimeout(() => {
+                unloadTimersRef.current.delete(url)
+                if (activeModelUrlsRef.current.has(url)) return
+                clearModelTemplate(url)
+                useGLTF.clear(url)
+            }, MODEL_UNLOAD_DELAY_MS)
+            unloadTimersRef.current.set(url, timerId)
+        }
+    }, [activeModelUrls])
+
+    useEffect(() => {
+        const timers = unloadTimersRef.current
+        return () => {
+            for (const timerId of timers.values()) {
+                window.clearTimeout(timerId)
+            }
+            timers.clear()
+        }
+    }, [])
+
+    const modelShadowCasterIds = useMemo(() => {
+        const max = isLowPerfDevice ? 1 : 2
+        const ids: string[] = []
+        if (selection?.type === 'item' && modelItems.some((it) => it.id === selection.id)) {
+            ids.push(selection.id)
+        }
+        for (const it of modelItems) {
+            if (ids.length >= max) break
+            if (!ids.includes(it.id)) ids.push(it.id)
+        }
+        return new Set(ids)
+    }, [isLowPerfDevice, selection, modelItems])
+
+    const shadowCastingLights = useMemo(() => {
+        if (!shadowsEnabled || placedLights.length === 0) return []
+        const max = isLowPerfDevice ? 1 : 2
+        const ids: string[] = []
+
+        if (selection?.type === 'light' && placedLights.some((l) => l.id === selection.id)) {
+            ids.push(selection.id)
+        }
+
+        for (const light of placedLights) {
+            if (ids.length >= max) break
+            if (!ids.includes(light.id)) ids.push(light.id)
+        }
+
+        return placedLights.filter((light) => ids.includes(light.id))
+    }, [shadowsEnabled, placedLights, isLowPerfDevice, selection])
+
+    const windowShadowCasterIds = useMemo(() => {
+        if (shadowCastingLights.length === 0) return new Set<string>()
+
+        const ids = new Set<string>()
+        for (const item of placedItems) {
+            if (!item.isWindow) continue
+            const width = item.windowSize?.width ?? 1.2
+            const height = item.windowSize?.height ?? 1.2
+            const halfW = width * 0.5
+            const halfH = height * 0.5
+            const halfD = WIN_FRAME_D * 0.5
+            const yaw = item.rotation[1] ?? 0
+            const alongX = Math.sin(yaw)
+            const alongZ = Math.cos(yaw)
+            const normalX = Math.cos(yaw)
+            const normalZ = -Math.sin(yaw)
+
+            for (const light of shadowCastingLights) {
+                const dx = light.position[0] - item.position[0]
+                const dy = light.position[1] - item.position[1]
+                const dz = light.position[2] - item.position[2]
+
+                // Light-to-window OBB distance in window-local axes.
+                const localAlong = dx * alongX + dz * alongZ
+                const localUp = dy
+                const localNormal = dx * normalX + dz * normalZ
+
+                const clampedAlong = Math.max(-halfW, Math.min(halfW, localAlong))
+                const clampedUp = Math.max(-halfH, Math.min(halfH, localUp))
+                const clampedNormal = Math.max(-halfD, Math.min(halfD, localNormal))
+
+                const distToWindow = Math.hypot(
+                    localAlong - clampedAlong,
+                    localUp - clampedUp,
+                    localNormal - clampedNormal,
+                )
+
+                if (distToWindow <= light.distance) {
+                    ids.add(item.id)
+                    break
+                }
+            }
+        }
+
+        return ids
+    }, [placedItems, shadowCastingLights])
 
     const handleSelect = (id: string) => {
         if (activeTool === 'select' && !readonly) {
@@ -561,20 +613,23 @@ export function SceneItems({ readonly = false }: { readonly?: boolean }) {
                             item={item}
                             isSelected={isSelected}
                             onClick={() => handleSelect(item.id)}
+                            castShadow={windowShadowCasterIds.has(item.id)}
                         />
                     )
                 }
 
                 return (
-                    <Suspense key={item.id} fallback={null}>
-                        <SceneModel
-                            item={item}
-                            isSelected={isSelected}
-                            onClick={() => handleSelect(item.id)}
-                            interactive={!readonly}
-                        />
-                    </Suspense>
-                )
+                        <Suspense key={item.id} fallback={null}>
+                            <SceneModel
+                                item={item}
+                                isSelected={isSelected}
+                                onClick={() => handleSelect(item.id)}
+                                interactive={!readonly}
+                                castShadow={modelShadowCasterIds.has(item.id)}
+                                onReady={handleModelReady}
+                            />
+                        </Suspense>
+                    )
             })}
 
             {!readonly && <DragPreview />}

@@ -1,7 +1,24 @@
-import React, { forwardRef, useRef } from 'react'
+import React, { forwardRef, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { extend, useFrame } from '@react-three/fiber'
+import type { ThreeElements } from '@react-three/fiber'
 import { shaderMaterial } from '@react-three/drei'
+
+type InfiniteGridProps = Omit<ThreeElements['mesh'], 'args'> & {
+    args: [number, number]
+    cellColor?: string
+    sectionColor?: string
+    cellSize?: number
+    sectionSize?: number
+    followCamera?: boolean
+    infiniteGrid?: boolean
+    fadeDistance?: number
+    fadeStrength?: number
+    fadeFrom?: number
+    cellThickness?: number
+    sectionThickness?: number
+    side?: THREE.Side
+}
 
 // A custom Grid material that analytically fades out high-frequency cells to prevent moiré aliasing.
 const GridMaterial = shaderMaterial(
@@ -89,7 +106,6 @@ const GridMaterial = shaderMaterial(
       gl_FragColor.a = mix(0.75 * gl_FragColor.a, gl_FragColor.a, g2);
       if (gl_FragColor.a <= 0.0) discard;
 
-      #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }
     `
@@ -97,7 +113,7 @@ const GridMaterial = shaderMaterial(
 
 extend({ GridMaterial })
 
-export const InfiniteGrid = forwardRef((props: any, fRef) => {
+export const InfiniteGrid = forwardRef<THREE.Mesh, InfiniteGridProps>((props, fRef) => {
     const {
         args,
         cellColor = '#000000',
@@ -115,28 +131,36 @@ export const InfiniteGrid = forwardRef((props: any, fRef) => {
         ...rest
     } = props
 
-    const ref = useRef<any>(null)
+    const ref = useRef<THREE.Mesh>(null!)
     React.useImperativeHandle(fRef, () => ref.current, [])
 
-    const plane = new THREE.Plane()
-    const upVector = new THREE.Vector3(0, 1, 0)
-    const zeroVector = new THREE.Vector3(0, 0, 0)
+    const plane = useRef(new THREE.Plane())
+    const upVector = useRef(new THREE.Vector3(0, 1, 0))
+    const zeroVector = useRef(new THREE.Vector3(0, 0, 0))
 
     useFrame((state) => {
         if (!ref.current) return
-        plane.setFromNormalAndCoplanarPoint(upVector, zeroVector).applyMatrix4(ref.current.matrixWorld)
-        const gridMaterial = ref.current.material
+        plane.current.setFromNormalAndCoplanarPoint(upVector.current, zeroVector.current).applyMatrix4(ref.current.matrixWorld)
+        const gridMaterial = ref.current.material as THREE.ShaderMaterial & {
+            uniforms: {
+                worldCamProjPosition: { value: THREE.Vector3 }
+                worldPlanePosition: { value: THREE.Vector3 }
+            }
+        }
         const worldCamProjPosition = gridMaterial.uniforms.worldCamProjPosition
         const worldPlanePosition = gridMaterial.uniforms.worldPlanePosition
-        plane.projectPoint(state.camera.position, worldCamProjPosition.value)
+        plane.current.projectPoint(state.camera.position, worldCamProjPosition.value)
         worldPlanePosition.value.set(0, 0, 0).applyMatrix4(ref.current.matrixWorld)
     })
+
+    const cellColorObj = useMemo(() => new THREE.Color(cellColor), [cellColor])
+    const sectionColorObj = useMemo(() => new THREE.Color(sectionColor), [sectionColor])
 
     const uniforms1 = {
         cellSize,
         sectionSize,
-        cellColor: new THREE.Color(cellColor),
-        sectionColor: new THREE.Color(sectionColor),
+        cellColor: cellColorObj,
+        sectionColor: sectionColorObj,
         cellThickness,
         sectionThickness,
     }
@@ -150,7 +174,6 @@ export const InfiniteGrid = forwardRef((props: any, fRef) => {
 
     return (
         <mesh ref={ref} frustumCulled={false} {...rest}>
-            {/* @ts-ignore */}
             <gridMaterial
                 transparent
                 depthWrite={false}
@@ -163,3 +186,5 @@ export const InfiniteGrid = forwardRef((props: any, fRef) => {
         </mesh>
     )
 })
+
+InfiniteGrid.displayName = 'InfiniteGrid'

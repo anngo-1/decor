@@ -1,8 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { Sparkles, ArrowRight } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Sparkles } from "lucide-react"
+import { useEffect } from "react"
 import { useStore } from "@/store/useStore"
 import { motion, Variants } from "framer-motion"
 import { TopNav } from "@/components/ui/TopNav"
@@ -162,6 +162,7 @@ export default function LandingPage() {
                     >
                       <div className="absolute inset-0 bg-indigo-50/30 flex items-center justify-center">
                         {space.preview_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
                           <img src={space.preview_url} alt={space.title} className="w-full h-full object-cover" />
                         ) : (
                           <span className="text-indigo-200 font-black text-2xl uppercase italic">{space.title || "Untitled"}</span>
@@ -206,7 +207,7 @@ export default function LandingPage() {
               <div>
                 <h3 className="text-lg font-bold mb-4 italic text-indigo-900">03. Acquire</h3>
                 <p className="text-indigo-900/60 font-light leading-relaxed">
-                  Purchase the items directly from the 3D studio once you've perfected your vision.
+                  Purchase the items directly from the 3D studio once you&apos;ve perfected your vision.
                 </p>
               </div>
             </div>

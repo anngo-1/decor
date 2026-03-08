@@ -54,6 +54,70 @@ export const SAMPLE_LIBRARY: LibraryItem[] = [
 
 const API_BASE = '/api/backend'
 
+type SpaceLayoutResponse = {
+    id: string
+    layout_data: {
+        roomPolygons: RoomPolygon[]
+        placedItems: PlacedItem[]
+        placedLights?: PlacedLight[]
+        wallHeight: number
+        environmentPreset?: string
+        lighting?: {
+            azimuth?: number
+            elevation?: number
+            intensity?: number
+        }
+    }
+}
+
+const spaceLayoutCache = new Map<string, SpaceLayoutResponse>()
+const inflightSpaceLayoutRequests = new Map<string, Promise<SpaceLayoutResponse>>()
+const preloadedModelUrls = new Set<string>()
+let dreiPreloadPromise: Promise<((url: string) => void) | null> | null = null
+
+async function getDreiPreload() {
+    if (!dreiPreloadPromise) {
+        dreiPreloadPromise = import('@react-three/drei')
+            .then((drei) => drei.useGLTF.preload)
+            .catch(() => null)
+    }
+    return dreiPreloadPromise
+}
+
+async function fetchSpaceLayout(spaceId: string) {
+    const cached = spaceLayoutCache.get(spaceId)
+    if (cached) return cached
+
+    const inflight = inflightSpaceLayoutRequests.get(spaceId)
+    if (inflight) return inflight
+
+    const request = fetch(`${API_BASE}/spaces/${spaceId}/layout`)
+        .then(async (res) => {
+            if (!res.ok) throw new Error(`Failed to fetch space ${spaceId}`)
+            const data = (await res.json()) as SpaceLayoutResponse
+            spaceLayoutCache.set(spaceId, data)
+            return data
+        })
+        .finally(() => {
+            inflightSpaceLayoutRequests.delete(spaceId)
+        })
+
+    inflightSpaceLayoutRequests.set(spaceId, request)
+    return request
+}
+
+async function preloadSpaceModels(layout: SpaceLayoutResponse['layout_data']) {
+    const preload = await getDreiPreload()
+    if (!preload) return
+
+    for (const item of layout.placedItems ?? []) {
+        if (!item.modelUrl || item.isWindow) continue
+        if (preloadedModelUrls.has(item.modelUrl)) continue
+        preloadedModelUrls.add(item.modelUrl)
+        preload(item.modelUrl)
+    }
+}
+
 interface StoreState {
     userId: string | null
     userSpaces: Space[]
@@ -62,8 +126,8 @@ interface StoreState {
     isLoading: boolean
     editingSpaceId: string | null
     // History
-    pastHistory: string[]
-    futureHistory: string[]
+    pastHistory: HistoryFields[]
+    futureHistory: HistoryFields[]
     commitHistory: () => void
     undo: () => void
     redo: () => void
@@ -94,8 +158,6 @@ interface StoreState {
     showSidebar: boolean
     draggedLibraryItem: LibraryItem | null
     shadowsEnabled: boolean
-    ceilingEnabled: boolean
-    ceilingTransparent: boolean
     isPointerLocked: boolean
     cinematicMode: boolean
     sunAzimuth: number
@@ -134,9 +196,9 @@ interface StoreState {
     placeItem: (item: Omit<PlacedItem, 'id'>) => string
     updateItemPosition: (id: string, position: [number, number, number], noCommit?: boolean) => void
     updateWindowPlacement: (id: string, positionAlongWall: number, noCommit?: boolean) => void
-    updateItemRotation: (id: string, rotation: [number, number, number]) => void
-    updateItemScale: (id: string, scale: number) => void
-    updateWindowSize: (id: string, width: number, height: number) => void
+    updateItemRotation: (id: string, rotation: [number, number, number], noCommit?: boolean) => void
+    updateItemScale: (id: string, scale: number, noCommit?: boolean) => void
+    updateWindowSize: (id: string, width: number, height: number, noCommit?: boolean) => void
     updateItemDimensions: (id: string, dimensions: [number, number, number]) => void
     removeItem: (id: string) => void
     setDraggedLibraryItem: (item: LibraryItem | null) => void
@@ -163,8 +225,6 @@ interface StoreState {
     setShowGenerateDialog: (v: boolean) => void
     toggleSidebar: () => void
     toggleShadows: () => void
-    toggleCeiling: () => void
-    toggleCeilingTransparent: () => void
     togglePointerLock: () => void
     toggleCinematicMode: () => void
     setLighting: (lighting: { azimuth?: number; elevation?: number; intensity?: number }) => void
@@ -186,12 +246,18 @@ interface StoreState {
 }
 
 function createId() {
-    return Math.random().toString(36).slice(2, 10)
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID()
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 type HistoryFields = Pick<StoreState, 'roomPolygons' | 'placedItems' | 'placedLights' | 'wallHeight' | 'sunAzimuth' | 'sunElevation' | 'sunIntensity' | 'environmentPreset'>
-function snapshot({ roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset }: HistoryFields): string {
-    return JSON.stringify({ roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset })
+
+const MAX_HISTORY = 20
+
+function snapshot({ roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset }: HistoryFields): HistoryFields {
+    return structuredClone({ roomPolygons, placedItems, placedLights, wallHeight, sunAzimuth, sunElevation, sunIntensity, environmentPreset })
 }
 
 export const useStore = create<StoreState>()(
@@ -229,8 +295,6 @@ export const useStore = create<StoreState>()(
         dragWindowHit: null,
         hoverPoint: null,
         shadowsEnabled: true,
-        ceilingEnabled: false,
-        ceilingTransparent: true,
         isPointerLocked: false,
         cinematicMode: false,
         sunAzimuth: 45,
@@ -256,8 +320,11 @@ export const useStore = create<StoreState>()(
 
         commitHistory: () => {
             const { pastHistory } = get()
+            const newHistory = [...pastHistory, snapshot(get())]
+            // Cap history depth to prevent unbounded memory growth
+            if (newHistory.length > MAX_HISTORY) newHistory.splice(0, newHistory.length - MAX_HISTORY)
             set({
-                pastHistory: [...pastHistory, snapshot(get())],
+                pastHistory: newHistory,
                 futureHistory: [],
             })
         },
@@ -265,7 +332,7 @@ export const useStore = create<StoreState>()(
         undo: () => {
             const { pastHistory, futureHistory } = get()
             if (pastHistory.length === 0) return
-            const previousState = JSON.parse(pastHistory[pastHistory.length - 1])
+            const previousState = pastHistory[pastHistory.length - 1]
             set({
                 ...previousState,
                 pastHistory: pastHistory.slice(0, -1),
@@ -277,7 +344,7 @@ export const useStore = create<StoreState>()(
         redo: () => {
             const { pastHistory, futureHistory } = get()
             if (futureHistory.length === 0) return
-            const nextState = JSON.parse(futureHistory[0])
+            const nextState = futureHistory[0]
             set({
                 ...nextState,
                 pastHistory: [...pastHistory, snapshot(get())],
@@ -539,22 +606,22 @@ export const useStore = create<StoreState>()(
             }))
         },
 
-        updateItemRotation: (id, rotation) => {
-            get().commitHistory()
+        updateItemRotation: (id, rotation, noCommit = false) => {
+            if (!noCommit) get().commitHistory()
             set((s) => ({
                 placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, rotation } : it)),
             }))
         },
 
-        updateItemScale: (id, scale) => {
-            get().commitHistory()
+        updateItemScale: (id, scale, noCommit = false) => {
+            if (!noCommit) get().commitHistory()
             set((s) => ({
                 placedItems: s.placedItems.map((it) => (it.id === id ? { ...it, scale } : it)),
             }))
         },
 
-        updateWindowSize: (id, width, height) => {
-            get().commitHistory()
+        updateWindowSize: (id, width, height, noCommit = false) => {
+            if (!noCommit) get().commitHistory()
             set((s) => ({
                 placedItems: s.placedItems.map((it) => {
                     if (it.id !== id || !it.isWindow || !it.windowSize) return it
@@ -615,8 +682,6 @@ export const useStore = create<StoreState>()(
         setShowGenerateDialog: (v) => set({ showGenerateDialog: v }),
         toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
         toggleShadows: () => set((s) => ({ shadowsEnabled: !s.shadowsEnabled })),
-        toggleCeiling: () => set((s) => ({ ceilingEnabled: !s.ceilingEnabled })),
-        toggleCeilingTransparent: () => set((s) => ({ ceilingTransparent: !s.ceilingTransparent })),
         togglePointerLock: () => set((s) => ({ isPointerLocked: !s.isPointerLocked })),
         toggleCinematicMode: () => set((s) => ({ cinematicMode: !s.cinematicMode })),
         setLighting: (lighting) => set((s) => ({
@@ -675,6 +740,7 @@ export const useStore = create<StoreState>()(
                     })
                 })
                 const data = await res.json()
+                spaceLayoutCache.delete(data.id)
                 set({ editingSpaceId: data.id })
                 get().fetchSpaces('user')
                 return data.id
@@ -689,8 +755,8 @@ export const useStore = create<StoreState>()(
         loadSpace: async (spaceId) => {
             set({ isLoading: true })
             try {
-                const res = await fetch(`${API_BASE}/spaces/${spaceId}`)
-                const data = await res.json()
+                const data = await fetchSpaceLayout(spaceId)
+                void preloadSpaceModels(data.layout_data)
                 const { roomPolygons, placedItems, placedLights, wallHeight, environmentPreset, lighting } = data.layout_data
                 set({
                     roomPolygons,
@@ -720,22 +786,8 @@ export const useStore = create<StoreState>()(
 
         preloadSpace: async (spaceId) => {
             try {
-                const res = await fetch(`${API_BASE}/spaces/${spaceId}`)
-                const data = await res.json()
-                const { placedItems } = data.layout_data
-                if (placedItems) {
-                    // Start preloading GLBs and textures
-                    // We don't need to await this as it's just a hint to the browser/cache
-                    placedItems.forEach((item: PlacedItem) => {
-                        if (item.modelUrl) {
-                            // We use the dynamic import to get useGLTF without bundling it in the core store if possible,
-                            // or just use the static preload if we can.
-                            import('@react-three/drei').then(drei => {
-                                drei.useGLTF.preload(item.modelUrl)
-                            })
-                        }
-                    })
-                }
+                const data = await fetchSpaceLayout(spaceId)
+                await preloadSpaceModels(data.layout_data)
             } catch (err) {
                 console.error('Failed to preload space:', err)
             }

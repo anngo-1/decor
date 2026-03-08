@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, Save, Globe, Lock, Loader2 } from 'lucide-react'
 import { useStore } from '@/store/useStore'
@@ -18,20 +18,6 @@ export function SaveDialog({ open, onOpenChange }: SaveDialogProps) {
     const [title, setTitle] = useState(currentSpace?.title || 'My Beautiful Space')
     const [description, setDescription] = useState(currentSpace?.description || '')
     const [isPublished, setIsPublished] = useState(currentSpace?.is_published || false)
-
-    useEffect(() => {
-        if (open) {
-            if (currentSpace) {
-                setTitle(currentSpace.title)
-                setDescription(currentSpace.description || '')
-                setIsPublished(currentSpace.is_published || false)
-            } else {
-                setTitle('My Beautiful Space')
-                setDescription('')
-                setIsPublished(false)
-            }
-        }
-    }, [open, currentSpace])
 
     const saveSpace = useStore((s) => s.saveSpace)
     const isSaving = useStore((s) => s.isSaving)

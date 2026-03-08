@@ -9,8 +9,6 @@ const MOVEMENT_KEYS = new Set(['w', 's', 'a', 'd', 'q', ' '])
 export function KeyboardShortcuts() {
     const setActiveTool = useStore((s) => s.setActiveTool)
     const setShowGenerateDialog = useStore((s) => s.setShowGenerateDialog)
-    const closeWallPolygon = useStore((s) => s.closeWallPolygon)
-    const finishWallDrawing = useStore((s) => s.finishWallDrawing)
     const cancelWallDrawing = useStore((s) => s.cancelWallDrawing)
     const isDrawingWall = useStore((s) => s.isDrawingWall)
     const removeItem = useStore((s) => s.removeItem)

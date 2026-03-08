@@ -21,7 +21,6 @@ import {
 } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { SaveDialog } from './SaveDialog'
-import type { EditorTool } from '@/types'
 
 interface ToolButtonProps {
     icon: React.ReactNode
@@ -86,7 +85,6 @@ export function AppToolbar() {
     const showSidebar = useStore((s) => s.showSidebar)
     const generatingCount = useStore((s) => s.generatingCount)
     const shadowsEnabled = useStore((s) => s.shadowsEnabled)
-    const toggleShadows = useStore((s) => s.toggleShadows)
     const isPointerLocked = useStore((s) => s.isPointerLocked)
     const togglePointerLock = useStore((s) => s.togglePointerLock)
     const undo = useStore((s) => s.undo)

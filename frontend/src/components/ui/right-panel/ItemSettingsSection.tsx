@@ -1,24 +1,26 @@
 'use client'
 
+import { useRef } from 'react'
 import * as Slider from '@radix-ui/react-slider'
 import { useStore } from '@/store/useStore'
 import { ArrowUpRight, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import { formatDim } from '@/utils/format'
+import { runEngineCommand } from '@/engine/core/commands'
 
 export function ItemSettingsSection({ itemId }: { itemId: string }) {
     const placedItems = useStore((s) => s.placedItems)
-    const updateItemRotation = useStore((s) => s.updateItemRotation)
-    const updateItemScale = useStore((s) => s.updateItemScale)
-    const updateItemPosition = useStore((s) => s.updateItemPosition)
-    const updateWindowSize = useStore((s) => s.updateWindowSize)
-    const removeItem = useStore((s) => s.removeItem)
 
     const item = placedItems.find((it) => it.id === itemId)
+    const scaleDirtyRef = useRef(false)
+    const widthDirtyRef = useRef(false)
+    const heightDirtyRef = useRef(false)
+    const elevationDirtyRef = useRef(false)
+
     if (!item) return null
 
     const rotate = (delta: number) => {
         const [rx, ry, rz] = item.rotation
-        updateItemRotation(item.id, [rx, ry + delta, rz])
+        runEngineCommand({ type: 'updateItemRotation', itemId: item.id, rotation: [rx, ry + delta, rz] })
     }
 
     return (
@@ -70,12 +72,20 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
                             <span className="text-xs font-bold text-indigo-400">Scale</span>
                             <span className="text-[10px] font-bold text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">{item.scale.toFixed(2)}x</span>
                         </div>
-                        <Slider.Root
-                            className="relative flex items-center select-none touch-none w-full h-5"
-                            value={[item.scale]}
-                            min={0.1} max={5.0} step={0.05}
-                            onValueChange={([v]) => updateItemScale(item.id, v)}
-                        >
+                            <Slider.Root
+                                className="relative flex items-center select-none touch-none w-full h-5"
+                                value={[item.scale]}
+                                min={0.1} max={5.0} step={0.05}
+                                onValueChange={([v]) => {
+                                    scaleDirtyRef.current = true
+                                    runEngineCommand({ type: 'updateItemScale', itemId: item.id, scale: v, noCommit: true })
+                                }}
+                                onValueCommit={([v]) => {
+                                    if (!scaleDirtyRef.current) return
+                                    scaleDirtyRef.current = false
+                                    runEngineCommand({ type: 'updateItemScale', itemId: item.id, scale: v })
+                                }}
+                            >
                             <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
                                 <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
                             </Slider.Track>
@@ -96,7 +106,15 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
                                 className="relative flex items-center select-none touch-none w-full h-5"
                                 value={[item.windowSize.width]}
                                 min={0.3} max={4.0} step={0.1}
-                                onValueChange={([v]) => updateWindowSize(item.id, v, item.windowSize!.height)}
+                                onValueChange={([v]) => {
+                                    widthDirtyRef.current = true
+                                    runEngineCommand({ type: 'updateWindowSize', itemId: item.id, width: v, height: item.windowSize!.height, noCommit: true })
+                                }}
+                                onValueCommit={([v]) => {
+                                    if (!widthDirtyRef.current) return
+                                    widthDirtyRef.current = false
+                                    runEngineCommand({ type: 'updateWindowSize', itemId: item.id, width: v, height: item.windowSize!.height })
+                                }}
                             >
                                 <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
                                     <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
@@ -113,7 +131,15 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
                                 className="relative flex items-center select-none touch-none w-full h-5"
                                 value={[item.windowSize.height]}
                                 min={0.3} max={3.0} step={0.1}
-                                onValueChange={([v]) => updateWindowSize(item.id, item.windowSize!.width, v)}
+                                onValueChange={([v]) => {
+                                    heightDirtyRef.current = true
+                                    runEngineCommand({ type: 'updateWindowSize', itemId: item.id, width: item.windowSize!.width, height: v, noCommit: true })
+                                }}
+                                onValueCommit={([v]) => {
+                                    if (!heightDirtyRef.current) return
+                                    heightDirtyRef.current = false
+                                    runEngineCommand({ type: 'updateWindowSize', itemId: item.id, width: item.windowSize!.width, height: v })
+                                }}
                             >
                                 <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
                                     <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
@@ -134,7 +160,15 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
                         className="relative flex items-center select-none touch-none w-full h-5"
                         value={[item.position[1]]}
                         min={0} max={3.5} step={0.05}
-                        onValueChange={([v]) => updateItemPosition(item.id, [item.position[0], v, item.position[2]])}
+                        onValueChange={([v]) => {
+                            elevationDirtyRef.current = true
+                            runEngineCommand({ type: 'updateItemPosition', itemId: item.id, position: [item.position[0], v, item.position[2]], noCommit: true })
+                        }}
+                        onValueCommit={([v]) => {
+                            if (!elevationDirtyRef.current) return
+                            elevationDirtyRef.current = false
+                            runEngineCommand({ type: 'updateItemPosition', itemId: item.id, position: [item.position[0], v, item.position[2]] })
+                        }}
                     >
                         <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
                             <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />
@@ -169,7 +203,7 @@ export function ItemSettingsSection({ itemId }: { itemId: string }) {
 
             <div className="mt-4 pt-4 border-t border-red-100">
                 <button
-                    onClick={() => removeItem(item.id)}
+                    onClick={() => runEngineCommand({ type: 'removeItem', itemId: item.id })}
                     className="flex w-full items-center justify-center gap-2 py-2.5 rounded-xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors font-bold text-xs"
                 >
                     <Trash2 className="h-4 w-4" />

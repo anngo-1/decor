@@ -3,37 +3,24 @@
 import { useStore } from '@/store/useStore'
 import { Plus, Lightbulb, Trash2, Sun } from 'lucide-react'
 import { SliderRow } from './SliderRow'
-
-export const ENVIRONMENTS = [
-    { id: 'city', name: 'Studio', color: '#f8fafc' },
-    { id: 'apartment', name: 'Warm', color: '#fdf4ff' },
-    { id: 'sunset', name: 'Sunset', color: '#ffedd5' },
-    { id: 'dawn', name: 'Dawn', color: '#e0e7ff' },
-    { id: 'night', name: 'Night', color: '#1e1b4b' },
-]
+import { ENVIRONMENTS } from '@/engine/config/environment'
+import { runEngineCommand } from '@/engine/core/commands'
 
 
 export function RoomSettingsSection() {
     const environmentPreset = useStore((s) => s.environmentPreset)
-    const setEnvironmentPreset = useStore((s) => s.setEnvironmentPreset)
 
     const shadowsEnabled = useStore((s) => s.shadowsEnabled)
-    const toggleShadows = useStore((s) => s.toggleShadows)
-    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
-    const toggleCeiling = useStore((s) => s.toggleCeiling)
-    const ceilingTransparent = useStore((s) => s.ceilingTransparent)
-    const toggleCeilingTransparent = useStore((s) => s.toggleCeilingTransparent)
     const sunIntensity = useStore((s) => s.sunIntensity)
-    const setLighting = useStore((s) => s.setLighting)
 
     const placedLights = useStore((s) => s.placedLights)
-    const placeLight = useStore((s) => s.placeLight)
-    const setSelection = useStore((s) => s.setSelection)
-    const removeLight = useStore((s) => s.removeLight)
 
     const handleAddLight = () => {
-        const id = placeLight({ position: [0, 2.5, 0], color: '#fff4e6', intensity: 3, distance: 8 })
-        setSelection({ type: 'light', id })
+        runEngineCommand({
+            type: 'placeLight',
+            light: { position: [0, 2.5, 0], color: '#fff4e6', intensity: 3, distance: 8 },
+            selectPlaced: true,
+        })
     }
 
     return (
@@ -47,7 +34,7 @@ export function RoomSettingsSection() {
                     {ENVIRONMENTS.map((env) => (
                         <button
                             key={env.id}
-                            onClick={() => setEnvironmentPreset(env.id)}
+                            onClick={() => runEngineCommand({ type: 'setEnvironmentPreset', preset: env.id })}
                             className={`flex flex-col items-center gap-1 py-2 rounded-lg transition-all flex-1 border-2
                                 ${environmentPreset === env.id
                                     ? 'bg-white border-indigo-400 shadow-sm'
@@ -67,19 +54,10 @@ export function RoomSettingsSection() {
 
                 <div className="flex flex-col gap-3 bg-indigo-50/50 p-3 rounded-xl mt-1">
                     <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-indigo-950">Global Sun</span>
+                        <span className="text-xs font-bold text-indigo-950">Ambient Light</span>
                         <div className="flex gap-1.5">
                             <button
-                                onClick={toggleCeiling}
-                                className={`text-[9px] font-black px-2 py-1 rounded-md border transition-all ${ceilingEnabled
-                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm shadow-indigo-200'
-                                    : 'bg-white border-indigo-200 text-indigo-400 hover:border-indigo-300 hover:text-indigo-600 shadow-sm'
-                                    }`}
-                            >
-                                {ceilingEnabled ? 'Ceiling On' : 'Ceiling Off'}
-                            </button>
-                            <button
-                                onClick={toggleShadows}
+                                onClick={() => runEngineCommand({ type: 'toggleShadows' })}
                                 className={`text-[9px] font-black px-2 py-1 rounded-md border transition-all ${shadowsEnabled
                                     ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm shadow-indigo-200'
                                     : 'bg-white border-indigo-200 text-indigo-400 hover:border-indigo-300 hover:text-indigo-600 shadow-sm'
@@ -89,27 +67,11 @@ export function RoomSettingsSection() {
                             </button>
                         </div>
                     </div>
-                    {ceilingEnabled && (
-                        <div className="flex gap-1.5 mb-1">
-                            <button
-                                onClick={toggleCeilingTransparent}
-                                className={`text-[9px] font-black px-2 py-1 rounded-md border transition-all ${ceilingTransparent
-                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-sm shadow-indigo-200'
-                                    : 'bg-white border-indigo-200 text-indigo-400 hover:border-indigo-300 hover:text-indigo-600 shadow-sm'
-                                    }`}
-                            >
-                                {ceilingTransparent ? 'Invisible' : 'Visible'}
-                            </button>
-                            <p className="text-[9px] text-indigo-400 leading-relaxed flex items-center">
-                                Sun blocked{ceilingTransparent ? ' (invisible)' : ''}. Use Custom Lights below.
-                            </p>
-                        </div>
-                    )}
                     <SliderRow
                         icon={<Sun className="h-4 w-4 text-amber-500" />}
                         value={sunIntensity}
                         min={0} max={20} step={0.1}
-                        onChange={(v) => setLighting({ intensity: v })}
+                        onChange={(v) => runEngineCommand({ type: 'setLighting', lighting: { intensity: v } })}
                         label={sunIntensity.toFixed(1)}
                     />
                 </div>
@@ -133,7 +95,7 @@ export function RoomSettingsSection() {
                 {placedLights.length === 0 ? (
                     <div className="flex flex-col items-center gap-2 py-8 text-indigo-300 bg-indigo-50/50 rounded-xl border border-dashed border-indigo-100">
                         <Lightbulb className="h-6 w-6 text-indigo-200" />
-                        <span className="text-[11px] font-medium text-center opacity-80">No custom lights.<br />Click 'Add Light' to place one.</span>
+                        <span className="text-[11px] font-medium text-center opacity-80">No custom lights.<br />Click &apos;Add Light&apos; to place one.</span>
                     </div>
                 ) : (
                     <div className="flex flex-col gap-2">
@@ -147,14 +109,14 @@ export function RoomSettingsSection() {
                                     <span className="text-xs font-bold text-indigo-950 flex-1">Point Light {i + 1}</span>
 
                                     <button
-                                        onClick={() => setSelection({ type: 'light', id: light.id })}
+                                        onClick={() => runEngineCommand({ type: 'selectLight', lightId: light.id })}
                                         className="text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-md transition-colors"
                                     >
                                         Edit
                                     </button>
                                     <div className="w-px h-4 bg-indigo-100 mx-0.5" />
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); removeLight(light.id) }}
+                                        onClick={(e) => { e.stopPropagation(); runEngineCommand({ type: 'removeLight', lightId: light.id }) }}
                                         className="flex h-6 w-6 items-center justify-center rounded-md text-indigo-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                                         title="Delete light"
                                     >

@@ -1,7 +1,6 @@
 'use client'
 
-import { CheckCircle, Loader2, AlertCircle, Sparkles, X } from 'lucide-react'
-import { useState } from 'react'
+import { CheckCircle, Loader2, AlertCircle, Sparkles } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import type { GenerationTask } from '@/types'
 
@@ -42,8 +41,6 @@ export function StatusBar() {
     const cancelWallDrawing = useStore((s) => s.cancelWallDrawing)
     const closeWallPolygon = useStore((s) => s.closeWallPolygon)
     const measureDistance = useStore((s) => s.measureDistance)
-
-    const placedItems = useStore((s) => s.placedItems)
 
     const recentTasks = activeTasks.slice(0, 3)
 

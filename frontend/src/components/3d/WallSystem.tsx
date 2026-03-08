@@ -3,12 +3,26 @@
 import { useMemo, useEffect } from 'react'
 import * as THREE from 'three'
 import { useStore } from '@/store/useStore'
+import { useShallow } from 'zustand/react/shallow'
 import type { Vec2, WindowOpening, PlacedItem } from '@/types'
 import { SNAP } from '@/utils/grid'
 
 const WALL_THICKNESS = 0.114
+const WALL_BASE_SEAL_HEIGHT = 0.04
 
 const sharedWallGeo = new THREE.BoxGeometry(1, 1, 1)
+
+// Shared materials — avoids creating new material instances per wall mesh per render
+const sharedWallMat = new THREE.MeshStandardMaterial({ color: '#e8e6e1', roughness: 0.8, metalness: 0.05, shadowSide: THREE.DoubleSide })
+const sharedGhostMat = new THREE.MeshStandardMaterial({ color: '#7c6af7', transparent: true, opacity: 0.35, roughness: 0.5, metalness: 0, shadowSide: THREE.DoubleSide })
+
+// Cache for custom-colored wall materials so we don't recreate them every render
+const colorMatCache = new Map<string, THREE.MeshStandardMaterial>()
+const sharedSelectionMat = new THREE.MeshBasicMaterial({ color: '#6366f1', side: THREE.BackSide, depthWrite: false })
+
+function segmentKey(polygonId: string, segmentIndex: number) {
+    return `${polygonId}:${segmentIndex}`
+}
 
 // --- Wall panel decomposition ---
 
@@ -126,16 +140,19 @@ function WallSegment({
     const activeTool = useStore((s) => s.activeTool)
 
     const isSelected = polygonId && segmentIndex !== undefined && selection?.type === 'wall' && selection.id === `${polygonId}-${segmentIndex}`
-    const color = customColor || '#e8e6e1'
 
-    // Tiny deterministic Y offset to prevent Z-fighting when segments overlap
-    let yOffset = 0
-    if (polygonId && segmentIndex !== undefined) {
-        let hash = 0
-        const str = polygonId + '-' + segmentIndex
-        for (let i = 0; i < str.length; i++) hash = Math.imul(31, hash) + str.charCodeAt(i) | 0
-        yOffset = ((Math.abs(hash) % 100) / 100) * 0.03 - 0.015
-    }
+    // Resolve material: shared default, shared ghost, or cached custom color
+    const wallMat = useMemo(() => {
+        if (ghost) return sharedGhostMat
+        if (!customColor) return sharedWallMat
+        let mat = colorMatCache.get(customColor)
+        if (!mat) {
+            mat = sharedWallMat.clone()
+            mat.color.set(customColor)
+            colorMatCache.set(customColor, mat)
+        }
+        return mat
+    }, [ghost, customColor])
 
     const handleClick = (e: { stopPropagation: () => void }) => {
         if (readonly || ghost || activeTool !== 'select') return
@@ -146,62 +163,95 @@ function WallSegment({
     }
 
     const hasWindows = !ghost && windows.length > 0
+    const windowKey = hasWindows ? windows.map(w => `${w.id}:${w.position}:${w.width}:${w.height}:${w.sillHeight}`).join('|') : ''
     const panels = useMemo(
         () => hasWindows ? buildWallPanels(length, height, windows) : [],
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [hasWindows, length, height, JSON.stringify(windows)],
+        [hasWindows, length, height, windowKey],
     )
 
+    // Stable userData ref — avoids allocating a new object every render
+    const userData = useMemo(() => ({ isWall: true, polygonId, segmentIndex }), [polygonId, segmentIndex])
+
     return (
-        <group position={[mx, (height / 2) + yOffset, mz]} rotation={[0, angle, 0]}>
+        <group position={[mx, height / 2, mz]} rotation={[0, angle, 0]}>
             {hasWindows ? (
                 /* Multi-panel wall with window holes — each panel tagged for wall raycasting */
                 panels.map((panel, i) => (
                     <mesh
                         key={i}
                         geometry={sharedWallGeo}
+                        material={wallMat}
                         position={[0, panel.y, panel.z]}
                         scale={[WALL_THICKNESS, panel.h, panel.zw]}
                         receiveShadow
                         castShadow
-                        onClick={handleClick}
-                        userData={{ isWall: true, polygonId, segmentIndex }}
-                    >
-                        <meshStandardMaterial color={color} roughness={0.8} metalness={0.05} />
-                    </mesh>
+                        userData={userData}
+                    />
                 ))
             ) : (
                 /* Original single-box wall — tagged for wall raycasting */
                 <mesh
                     geometry={sharedWallGeo}
+                    material={wallMat}
                     scale={[WALL_THICKNESS, height, length + WALL_THICKNESS]}
                     receiveShadow
                     castShadow
                     onClick={handleClick}
-                    userData={{ isWall: true, polygonId, segmentIndex }}
-                >
-                    {ghost ? (
-                        <meshStandardMaterial color="#7c6af7" transparent opacity={0.35} roughness={0.5} metalness={0} />
-                    ) : (
-                        <meshStandardMaterial color={color} roughness={0.8} metalness={0.05} />
-                    )}
-                </mesh>
-            )}
+                    userData={userData}
+                />
+            )
+            }
+
+            <mesh
+                geometry={sharedWallGeo}
+                material={wallMat}
+                position={[0, -height / 2 + WALL_BASE_SEAL_HEIGHT / 2, 0]}
+                scale={[WALL_THICKNESS + 0.02, WALL_BASE_SEAL_HEIGHT, length + WALL_THICKNESS + 0.02]}
+                receiveShadow
+                castShadow
+            />
 
             {/* Selection outline — single box covering entire wall extent */}
-            {isSelected && !ghost && (
-                <mesh geometry={sharedWallGeo} scale={[WALL_THICKNESS + 0.18, height + 0.05, length + WALL_THICKNESS + 0.18]}>
-                    <meshBasicMaterial color="#6366f1" side={THREE.BackSide} depthWrite={false} />
-                </mesh>
-            )}
-        </group>
+            {
+                isSelected && !ghost && (
+                    <mesh geometry={sharedWallGeo} material={sharedSelectionMat} scale={[WALL_THICKNESS + 0.18, height + 0.05, length + WALL_THICKNESS + 0.18]} />
+                )
+            }
+        </group >
     )
 }
 
 export function WallSystem({ readonly = false }: { readonly?: boolean }) {
     const roomPolygons = useStore((s) => s.roomPolygons)
     const wallHeight = useStore((s) => s.wallHeight)
-    const placedItems = useStore((s) => s.placedItems)
+    // Only subscribe to window items — furniture moves won't trigger wall re-renders
+    const windowItems = useStore(useShallow((s) =>
+        s.placedItems.filter((it): it is PlacedItem & Required<Pick<PlacedItem, 'wallRef' | 'windowSize'>> =>
+            !!(it.isWindow && it.wallRef && it.windowSize)
+        )
+    ))
+
+    const windowsBySegment = useMemo(() => {
+        const map = new Map<string, WindowOpening[]>()
+        for (const it of windowItems) {
+            const key = segmentKey(it.wallRef.polygonId, it.wallRef.segmentIndex)
+            const arr = map.get(key)
+            const opening: WindowOpening = {
+                id: it.id,
+                position: it.wallRef.positionAlongWall,
+                width: it.windowSize.width,
+                height: it.windowSize.height,
+                sillHeight: it.windowSize.sillHeight,
+            }
+            if (arr) {
+                arr.push(opening)
+            } else {
+                map.set(key, [opening])
+            }
+        }
+        return map
+    }, [windowItems])
 
     return (
         <group>
@@ -217,18 +267,8 @@ export function WallSystem({ readonly = false }: { readonly?: boolean }) {
                             const segProps = poly.segmentProps?.[i]
                             const segH = segProps?.height ?? wallHeight
 
-                            // Derive windows from placed items referencing this segment
-                            const segWindows: WindowOpening[] = placedItems
-                                .filter((it): it is PlacedItem & Required<Pick<PlacedItem, 'wallRef' | 'windowSize'>> =>
-                                    !!(it.isWindow && it.wallRef?.polygonId === poly.id && it.wallRef?.segmentIndex === i && it.windowSize)
-                                )
-                                .map((it) => ({
-                                    id: it.id,
-                                    position: it.wallRef.positionAlongWall,
-                                    width: it.windowSize.width,
-                                    height: it.windowSize.height,
-                                    sillHeight: it.windowSize.sillHeight,
-                                }))
+                            // Derive windows from pre-filtered window items
+                            const segWindows = windowsBySegment.get(segmentKey(poly.id, i)) ?? []
 
                             return (
                                 <WallSegment
@@ -266,7 +306,7 @@ function PolygonFloor({ points }: { points: Vec2[] }) {
     }, [floorGeo])
 
     return (
-        <mesh geometry={floorGeo} position={[0, 0.002, 0]} receiveShadow>
+        <mesh geometry={floorGeo} position={[0, 0, 0]} receiveShadow>
             <meshStandardMaterial color="#ffffff" roughness={0.9} metalness={0.0} toneMapped={false} />
         </mesh>
     )
@@ -274,36 +314,15 @@ function PolygonFloor({ points }: { points: Vec2[] }) {
 
 export function RoomCeilingAndFloor() {
     const roomPolygons = useStore((s) => s.roomPolygons)
-    const wallHeight = useStore((s) => s.wallHeight)
-    const ceilingEnabled = useStore((s) => s.ceilingEnabled)
-    const ceilingTransparent = useStore((s) => s.ceilingTransparent)
-
-    if (!ceilingEnabled) return null
 
     return (
         <group>
-            {/* Global ceiling — large plane at wallHeight, visible from below.
-                When transparent, we skip rendering entirely: opacity=0 meshes still
-                write to the depth buffer and SSAO processes their geometry, causing
-                a visible darkening band at the ceiling plane when orbiting.
-                Shadow blocking is handled by disabling castShadow on the directional light. */}
-            {!ceilingTransparent && (
-                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, wallHeight, 0]}>
-                    <planeGeometry args={[200, 200]} />
-                    <meshStandardMaterial
-                        color="#e8e6e1"
-                        roughness={0.85}
-                        metalness={0.02}
-                        side={THREE.BackSide}
-                    />
-                </mesh>
-            )}
             {/* Per-polygon floor overlay — bounded to the room footprint */}
             {roomPolygons
                 .filter((poly) => poly.closed && poly.points.length >= 3)
                 .map((poly) => (
-                    <PolygonFloor key={poly.id} points={poly.points} />
-                ))}
+                <PolygonFloor key={poly.id} points={poly.points} />
+            ))}
         </group>
     )
 }

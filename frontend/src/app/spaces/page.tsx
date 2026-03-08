@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import Link from 'next/link'
-import { Sparkles, Plus, Clock, Users, ArrowRight, Lock, Globe } from 'lucide-react'
+import { Sparkles, Plus, Clock, Users, ArrowRight, Globe } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import { Space } from '@/types'
 import { motion } from 'framer-motion'
@@ -18,6 +18,7 @@ function SpaceCard({ space }: { space: Space }) {
         <Link href={`/space/${space.id}`} className="group block rounded-3xl border border-indigo-100 bg-white shadow-sm hover:shadow-xl hover:shadow-indigo-100/50 transition-all overflow-hidden hover:-translate-y-1">
             <div className="aspect-video relative bg-indigo-50/30 overflow-hidden">
                 {space.preview_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={space.preview_url} alt={space.title} className="w-full h-full object-cover" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-indigo-200">
@@ -46,6 +47,7 @@ function CommunityCard({ space }: { space: Space }) {
         <Link href={`/space/${space.id}`} className="group block rounded-3xl border border-indigo-100 bg-white shadow-sm hover:shadow-xl hover:shadow-indigo-100/50 transition-all overflow-hidden hover:-translate-y-1">
             <div className="aspect-video relative bg-indigo-50/30 overflow-hidden">
                 {space.preview_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={space.preview_url} alt={space.title} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-indigo-200">

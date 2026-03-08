@@ -17,7 +17,6 @@ const RoomCanvas = dynamic(
 
 function FeedItem({ space, isActive }: { space: Space; isActive: boolean }) {
     const loadSpace = useStore((s) => s.loadSpace)
-    const [hasInteracted, setHasInteracted] = useState(false)
 
     useEffect(() => {
         if (isActive) {
@@ -35,6 +34,7 @@ function FeedItem({ space, isActive }: { space: Space; isActive: boolean }) {
             ) : (
                 <div className="w-full h-full flex items-center justify-center bg-indigo-50/20">
                     {space.preview_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={space.preview_url} alt={space.title} className="w-full h-full object-cover blur-sm opacity-50" />
                     ) : (
                         <Sparkles className="h-12 w-12 text-indigo-100 animate-pulse" />
@@ -131,7 +131,7 @@ export default function FeedPage() {
     return (
         <div className="relative h-screen flex flex-col bg-[#fcfaff] overflow-hidden">
             <div className="absolute top-0 left-0 right-0 z-50">
-                <TopNav />
+                <TopNav solid />
             </div>
 
             <div

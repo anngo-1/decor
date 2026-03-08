@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Sparkles, Upload, X, Loader2, CheckCircle, AlertCircle, Image as ImageIcon } from 'lucide-react'
+import { Sparkles, X, Loader2, AlertCircle, Image as ImageIcon } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 
 function useGenerationPolling() {
@@ -134,7 +134,7 @@ export function GenerateDialog() {
             setFile(null)
             setPreview(null)
             setName('')
-        } catch (e) {
+        } catch {
             setError('Network error, please try again')
         } finally {
             setIsSubmitting(false)
@@ -187,6 +187,7 @@ export function GenerateDialog() {
                   `}
                             >
                                 {preview ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
                                     <img
                                         src={preview}
                                         alt="Preview"

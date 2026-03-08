@@ -3,7 +3,7 @@
 import * as Slider from '@radix-ui/react-slider'
 
 export function SliderRow({
-    icon, value, min, max, step, onChange, label,
+    icon, value, min, max, step, onChange, onCommit, label,
 }: {
     icon: React.ReactNode
     value: number
@@ -11,6 +11,7 @@ export function SliderRow({
     max: number
     step: number
     onChange: (v: number) => void
+    onCommit?: (v: number) => void
     label: string
 }) {
     return (
@@ -21,6 +22,7 @@ export function SliderRow({
                 value={[value]}
                 min={min} max={max} step={step}
                 onValueChange={([v]) => onChange(v)}
+                onValueCommit={onCommit ? ([v]) => onCommit(v) : undefined}
             >
                 <Slider.Track className="bg-indigo-100 relative grow rounded-full h-1.5">
                     <Slider.Range className="absolute bg-indigo-400 rounded-full h-full" />

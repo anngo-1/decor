@@ -27,21 +27,12 @@ export function SceneLoader() {
         manager.onStart = handleStart
         manager.onLoad = handleLoad
 
-        // If all models came from useGLTF cache, Three.js never calls onStart/onLoad.
-        // Detect this by checking shortly after mount: if loading never started, clear the overlay.
-        const cachedFallback = setTimeout(() => {
-            if (!isCurrentlyLoading) {
-                setIsLoading(false)
-            }
-        }, 300)
-
         const fallbackTimeout = setTimeout(() => {
             isCurrentlyLoading = false
             setIsLoading(false)
         }, 10000)
 
         return () => {
-            clearTimeout(cachedFallback)
             clearTimeout(fallbackTimeout)
             manager.onStart = () => { }
             manager.onLoad = () => { }
